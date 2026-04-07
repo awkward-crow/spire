@@ -5,14 +5,15 @@
 | File | Purpose |
 |---|---|
 | `Objectives.chpl` | Gradient/hessian computation for MSE, LogLoss, Pinball |
-| `DataLayout.chpl` | Distributed array layout, synthetic data generators |
+| `DataLayout.chpl` | Distributed array layout (`GBMData` record, `printDataSummary`) |
+| `SyntheticData.chpl` | Synthetic dataset generators (classification, regression) |
 | `TestObjectives.chpl` | Unit tests + distributed smoke test |
 
 ## Build & Run
 
 ```bash
 # Single locale
-chpl TestObjectives.chpl Objectives.chpl DataLayout.chpl -o test_obj
+chpl TestObjectives.chpl Objectives.chpl DataLayout.chpl SyntheticData.chpl -o test_obj
 ./test_obj
 
 # Multi-locale (requires Chapel built with GASNet or PGAS fabric)

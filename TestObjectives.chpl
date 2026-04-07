@@ -17,6 +17,7 @@
 
 use Objectives;
 use DataLayout;
+use SyntheticData;
 use Math;
 
 // ------------------------------------------------------------------
