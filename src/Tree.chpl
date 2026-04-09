@@ -109,7 +109,8 @@ module Tree {
       splits    : [] SplitInfo,
       hist      : HistogramData,
       depth     : int,
-      lambda    : real
+      lambda    : real,
+      eta       : real
   ) {
     for n in 0..#(1 << depth) {
       const idx = heapIdx(depth, n);
@@ -121,7 +122,7 @@ module Tree {
         const G = + reduce hist.grad[idx, 0, ..];
         const H = + reduce hist.hess[idx, 0, ..];
         tree.isLeaf[idx] = true;
-        tree.value[idx]  = leafValue(G, H, lambda);
+        tree.value[idx]  = eta * leafValue(G, H, lambda);
         logTrace("early leaf node=" + idx:string
                + " depth="         + depth:string
                + " G="             + G:string
@@ -142,7 +143,8 @@ module Tree {
       ref tree  : FittedTree,
       hist      : HistogramData,
       depth     : int,
-      lambda    : real
+      lambda    : real,
+      eta       : real
   ) {
     for n in 0..#(1 << depth) {
       const idx = heapIdx(depth, n);
@@ -150,7 +152,7 @@ module Tree {
         const G = + reduce hist.grad[idx, 0, ..];
         const H = + reduce hist.hess[idx, 0, ..];
         tree.isLeaf[idx] = true;
-        tree.value[idx]  = leafValue(G, H, lambda);
+        tree.value[idx]  = eta * leafValue(G, H, lambda);
         logTrace("leaf node=" + idx:string
                + " G="       + G:string
                + " H="       + H:string
@@ -170,7 +172,6 @@ module Tree {
   proc applyTree(
       data    : GBMData,
       tree    : FittedTree,
-      eta     : real,
       ref F   : [] real
   ) {
     coforall loc in Locales with (ref F) {
@@ -189,7 +190,7 @@ module Tree {
             else
               node = 2 * node + 2;
           }
-          F[i] += eta * localValue[node];
+          F[i] += localValue[node];
         }
       }
     }

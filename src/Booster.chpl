@@ -106,10 +106,10 @@ module Booster {
         if d < cfg.maxDepth {
           const splits = findBestSplits(hist, cfg.lambda, cfg.minHess);
           logSplits(t, d, splits);
-          recordLevel(trees[t], splits, hist, d, cfg.lambda);
+          recordLevel(trees[t], splits, hist, d, cfg.lambda, cfg.eta);
           updateNodeAssign(data, splits, nodeId);
         } else {
-          finalizeLeaves(trees[t], hist, d, cfg.lambda);
+          finalizeLeaves(trees[t], hist, d, cfg.lambda, cfg.eta);
           const nLeaves = + reduce trees[t].isLeaf: int;
           logInfo("tree=" + t:string + " leaves=" + nLeaves:string);
         }
@@ -118,7 +118,7 @@ module Booster {
       // ----------------------------------------------------------
       // Step 3: update predictions
       // ----------------------------------------------------------
-      applyTree(data, trees[t], cfg.eta, data.F);
+      applyTree(data, trees[t], data.F);
       logInfo("tree=" + t:string
             + " trainLoss=" + computeLoss(obj, data.F, data.y, cfg.tau):string);
     }
@@ -134,10 +134,10 @@ module Booster {
   // call applyBins(testData, cuts) before predicting on new data).
   // data.F is NOT modified.
   // ------------------------------------------------------------------
-  proc predict(trees: [] FittedTree, data: GBMData, eta: real): [] real {
+  proc predict(trees: [] FittedTree, data: GBMData): [] real {
     var preds: [data.rowDom] real = 0.0;
     for t in trees.domain {
-      applyTree(data, trees[t], eta, preds);
+      applyTree(data, trees[t], preds);
     }
     return preds;
   }

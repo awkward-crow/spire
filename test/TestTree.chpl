@@ -116,7 +116,7 @@ proc testApplyTree() {
   tree.value[2]    = -1.0;
 
   var F: [data.rowDom] real = 0.0;
-  applyTree(data, tree, 1.0, F);
+  applyTree(data, tree, F);
 
   assertClose("F[0] (Xb=2 → left)",  F[0],  1.0);
   assertClose("F[1] (Xb=5 → left)",  F[1],  1.0);
@@ -153,14 +153,14 @@ proc testEndToEnd() {
   buildHistograms(data, nodeId, hist);
   const splits0 = findBestSplits(hist, lambda=1.0, minHess=1.0);
   assertTrue("root (heap 0) has a valid split", splits0[0].valid);
-  recordLevel(tree, splits0, hist, depth=0, lambda=1.0);
+  recordLevel(tree, splits0, hist, depth=0, lambda=1.0, eta=0.1);
   updateNodeAssign(data, splits0, nodeId);
 
   // Depth 1 — finalize leaves
   buildHistograms(data, nodeId, hist);
-  finalizeLeaves(tree, hist, depth=1, lambda=1.0);
+  finalizeLeaves(tree, hist, depth=1, lambda=1.0, eta=0.1);
 
-  applyTree(data, tree, eta=0.1, data.F);
+  applyTree(data, tree, data.F);
 
   assertTrue("F is updated after applyTree", (max reduce abs(data.F)) > 0.0);
 
