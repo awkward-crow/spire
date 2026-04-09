@@ -2,31 +2,34 @@
 
 ## Files
 
+### dir. src
+
 | File | Purpose |
 |---|---|
-| `Objectives.chpl` | Gradient/hessian computation for MSE, LogLoss, Pinball |
-| `DataLayout.chpl` | Distributed array layout (`GBMData` record, `printDataSummary`) |
+| `DataLayout.chpl` | `GBMData` record — distributed arrays for X, y, F, grad, hess, Xb |
+| `Objectives.chpl` | Gradients, hessians, and loss functions for MSE, LogLoss, Pinball |
 | `SyntheticData.chpl` | Synthetic dataset generators (classification, regression) |
-| `TestObjectives.chpl` | Unit tests + distributed smoke test |
-| `Binning.chpl` | *(Phase 2)* Sampling-based quantile binning → `uint8` bin matrix |
-| `Histogram.chpl` | *(Phase 2)* Histogram accumulation and subtraction trick |
-| `Splits.chpl` | *(Phase 2)* Split finding, `SplitInfo` record |
-| `Tree.chpl` | *(Phase 2)* Node assignment, leaf values, `applyTree` |
-| `Booster.chpl` | *(Phase 2)* End-to-end training loop, `BoosterConfig`, `boost` |
+| `Binning.chpl` | Sampling-based quantile binning; `BinCuts` record; `computeBins`, `applyBins` |
+| `Histogram.chpl` | Histogram accumulation and subtraction trick |
+| `Splits.chpl` | Split finding; `SplitInfo` record |
+| `Tree.chpl` | `FittedTree` record; node assignment, leaf values, `applyTree` |
+| `Booster.chpl` | `BoosterConfig`, `boost`, `predict` |
+| `Logger.chpl` | Levelled logging (NONE / INFO / TRACE) via `--logLevel=` config const |
 
-## Build & Run
+### dir. test
 
-```bash
-cd test
+| File | Tests |
+|---|---|
+| `TestObjectives.chpl` | Gradient/hessian values; loss function values; distributed smoke test |
+| `TestBinning.chpl` | Bin cut computation, `findBin`, `applyBins` |
+| `TestHistogram.chpl` | Histogram accumulation, subtraction trick |
+| `TestSplits.chpl` | Split gain, `findBestSplits` |
+| `TestTree.chpl` | Node assignment, leaf values, `applyTree` |
+| `TestBooster.chpl` | End-to-end: MSE / LogLoss / Pinball loss decreases after boosting |
+| `TestPredict.chpl` | `predict` (from `Booster.chpl`)on train set matches `data.F`; held-out test set; `applyBins` |
 
-make               # build all tests
-make run           # build and run all tests
-make TestObjectives  # build one test
-./build/TestObjectives -nl 4  # multi-locale (requires GASNet)
-make clean         # remove build/
-```
-
-To add a new test, append its module name to `TESTS` in `test/Makefile`.
+Tests are built and run from `test/` via `make`. To add a new test, append
+its module name to `TESTS` in `test/Makefile`.
 
 ## Design Notes
 
@@ -129,18 +132,15 @@ Titanic):
    a text file into `GBMData`.  Even a minimal implementation (no missing
    values, all columns numeric) unblocks real-dataset testing.
 
-2. **`predict` on held-out data** — a `predict(trees: [] FittedTree, data: GBMData): [] real`
-   procedure that applies the fitted ensemble to a new dataset without
-   modifying `data.F`.  Can be tested against the synthetic data we already
-   have.
+2. ~~**`predict` on held-out data**~~ ✓ — `predict(trees, data, eta)` in
+   `Booster.chpl`; `applyBins(data, cuts)` in `Binning.chpl`; tested in
+   `TestPredict.chpl`.
 
-3. **Comparison driver** (`src/` or standalone) — load dataset, train/test
-   split, train the Chapel GBM, print RMSE (regression) or log-loss
-   (classification) on the test set alongside equivalent LightGBM/XGBoost
-   numbers for direct comparison.
+3. **Comparison driver** — load dataset, train/test split, train the Chapel
+   GBM, print RMSE (regression) or log-loss (classification) on the test set
+   alongside equivalent LightGBM/XGBoost numbers for direct comparison.
 
-Order: `predict` first (no I/O dependency, testable immediately), then CSV
-reader, then the driver.
+Order: CSV reader next, then the driver.
 
 ### Open questions
 
@@ -148,3 +148,9 @@ reader, then the driver.
 - Row/column subsampling (both LGBM and XGBoost default to subsampling;
   omitting it will widen the accuracy gap on noisy datasets)
 - Missing value handling (required for most real-world datasets)
+- **Early stopping** — currently `nTrees` is a fixed hyperparameter; the
+  booster always builds exactly that many trees. LightGBM/XGBoost halt early
+  if validation loss hasn't improved for `earlyStoppingRounds` consecutive
+  trees. Natural to add once the comparison driver has a validation set to
+  monitor; would require passing a `valData: GBMData` to `boost` and a
+  `earlyStoppingRounds: int` field in `BoosterConfig`.

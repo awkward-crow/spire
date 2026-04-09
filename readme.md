@@ -1,5 +1,6 @@
 # spire -- gradient boosting machines
 
+
 ## usage/tests
 
 ```sh
@@ -23,6 +24,23 @@ make TestObjectives
 ./build/TestObjectives -nl 4
 ```
 
+### logging
+
+```sh
+./build/TestBooster -logLevel=INFO 2>&1 | less -X
+```
+
+or log level `TRACE`.
+
+### clean up
+
+```sh
+make clean
+```
+
+
+## `CHPL_TARGET_CPU=native`
+
 By default tests are compiled with `CHPL_TARGET_CPU=native`, optimising for
 the build machine's CPU.  On a cluster with a specific microarchitecture,
 override this:
@@ -36,5 +54,6 @@ make CHPL_TARGET_CPU=broadwell
  - file `notes.md`
  - file `chapel_arkouda_gbm_conversation.md`
  - file `docker.md`
+
 
 ### end
