@@ -1,5 +1,6 @@
 # spire -- gradient boosting machines
 
+claude --resume 943e5316-411f-4ad0-bebb-323fa13bb65c
 
 ## usage/tests
 
@@ -48,6 +49,15 @@ override this:
 ```sh
 make CHPL_TARGET_CPU=broadwell
 ```
+
+## next steps
+
+1. **Min-split-gain pruning** — add `minGain: real = 0.0` to `BoosterConfig`, check `gain > cfg.minGain` in `findBestSplits`. Single-field change, very low cost.
+2. **Early stopping** — add `valData` and `earlyStoppingRounds` to `BoosterConfig`; track best validation loss in `boost` and halt early.
+3. **Row/column subsampling** — both LightGBM and XGBoost default to subsampling; omitting it widens the accuracy gap on noisy datasets.
+4. **Histogram memory layout benchmark** — `[node, feature, bin]` vs `[feature, bin, node]`.
+5. **Leaf-wise growth** — larger change; batched leaf-wise is the Chapel-native angle.
+6. **Missing value handling** — needed for most real-world datasets beyond California Housing.
 
 ## see also
 
