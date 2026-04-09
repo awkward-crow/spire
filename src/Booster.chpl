@@ -27,6 +27,7 @@ module Booster {
   use Histogram;
   use Splits;
   use Tree;
+  use Logger;
 
   // ------------------------------------------------------------------
   // BoosterConfig
@@ -38,6 +39,25 @@ module Booster {
     var lambda   : real = 1.0;    // L2 regularisation on leaf weights
     var minHess  : real = 1.0;    // minimum hessian sum per leaf
     var tau      : real = 0.5;    // quantile level (Pinball loss only)
+  }
+
+  // ------------------------------------------------------------------
+  // logSplits — trace-level logging of split decisions at one depth.
+  // ------------------------------------------------------------------
+  private proc logSplits(t: int, d: int, splits: [] SplitInfo) {
+    if logLevel < LogLevel.TRACE then return;
+    for n in 0..#(1 << d) {
+      const idx = heapIdx(d, n);
+      const s   = splits[idx];
+      if s.valid then
+        logTrace("tree="     + t:string
+               + " depth="   + d:string
+               + " node="    + idx:string
+               + " feature=" + s.feature:string
+               + " bin="     + s.bin:string
+               + " gain="    + s.gain:string
+               + " leftH="   + s.leftHess:string);
+    }
   }
 
   // ------------------------------------------------------------------
@@ -53,8 +73,9 @@ module Booster {
       cfg      : BoosterConfig
   ): [] FittedTree {
 
-    // Quantile binning — done once before any boosting rounds
-    computeBins(data);
+    // Caller is responsible for calling computeBins(data) before boost()
+    // so that data.Xb is populated.  This keeps binning explicit and
+    // allows the same BinCuts to be reused for test-set prediction.
 
     var trees: [0..#cfg.nTrees] FittedTree;
 
@@ -84,10 +105,13 @@ module Booster {
 
         if d < cfg.maxDepth {
           const splits = findBestSplits(hist, cfg.lambda, cfg.minHess);
+          logSplits(t, d, splits);
           recordLevel(trees[t], splits, hist, d, cfg.lambda);
           updateNodeAssign(data, splits, nodeId);
         } else {
           finalizeLeaves(trees[t], hist, d, cfg.lambda);
+          const nLeaves = + reduce trees[t].isLeaf: int;
+          logInfo("tree=" + t:string + " leaves=" + nLeaves:string);
         }
       }
 
@@ -95,9 +119,27 @@ module Booster {
       // Step 3: update predictions
       // ----------------------------------------------------------
       applyTree(data, trees[t], cfg.eta, data.F);
+      logInfo("tree=" + t:string
+            + " trainLoss=" + computeLoss(obj, data.F, data.y, cfg.tau):string);
     }
 
     return trees;
+  }
+
+  // ------------------------------------------------------------------
+  // predict
+  //
+  // Apply the fitted ensemble to data and return predictions.
+  // data.Xb must already be filled (boost() does this for training data;
+  // call applyBins(testData, cuts) before predicting on new data).
+  // data.F is NOT modified.
+  // ------------------------------------------------------------------
+  proc predict(trees: [] FittedTree, data: GBMData, eta: real): [] real {
+    var preds: [data.rowDom] real = 0.0;
+    for t in trees.domain {
+      applyTree(data, trees[t], eta, preds);
+    }
+    return preds;
   }
 
 } // module Booster

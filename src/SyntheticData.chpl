@@ -32,6 +32,9 @@ module SyntheticData {
 
     var rng = new randomStream(real, seed=seed);
     rng.fill(data.X);
+    // Centre features: shift from [0,1) to [-0.5, 0.5) so the linear
+    // decision score is symmetric around 0, giving balanced classes.
+    forall (i, f) in data.XDom with (ref data) do data.X[i, f] -= 0.5;
 
     // Build a fixed weight vector for the informative features
     // (deterministic from seed — same result every run)
@@ -72,6 +75,8 @@ module SyntheticData {
 
     var rng = new randomStream(real, seed=seed);
     rng.fill(data.X);
+    // Centre features: shift from [0,1) to [-0.5, 0.5) for zero-mean inputs.
+    forall (i, f) in data.XDom with (ref data) do data.X[i, f] -= 0.5;
 
     var noise: [data.rowDom] real;
     var noiseRng = new randomStream(real, seed=seed + 99);

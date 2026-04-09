@@ -24,8 +24,28 @@ module Binning {
   use Random;
   use Sort;
   use Math;
+  use Logger;
 
   param MAX_BINS = 255;   // bins per feature; uint(8) covers 0..254
+
+  // ------------------------------------------------------------------
+  // BinCuts
+  //
+  // Stores the quantile cut-points computed from training data so they
+  // can be reapplied to a held-out (test) set via applyBins.
+  // ------------------------------------------------------------------
+  record BinCuts {
+    var nFeatures : int;
+    var nCuts     : int;
+    var cutDom    : domain(2);
+    var values    : [cutDom] real;
+
+    proc init(nFeatures: int, nCuts: int = MAX_BINS - 1) {
+      this.nFeatures = nFeatures;
+      this.nCuts     = nCuts;
+      this.cutDom    = {0..#nFeatures, 0..#nCuts};
+    }
+  }
 
   // ------------------------------------------------------------------
   // computeBins
@@ -33,7 +53,7 @@ module Binning {
   // Populates data.Xb with bin indices in 0..MAX_BINS-1.
   // Call once before training begins.
   // ------------------------------------------------------------------
-  proc computeBins(ref data: GBMData, seed: int = 42) {
+  proc computeBins(ref data: GBMData, seed: int = 42): BinCuts {
     const nF    = data.numFeatures;
     const nCuts = MAX_BINS - 1;   // 254 cut-points → 255 bins
 
@@ -104,6 +124,32 @@ module Binning {
         const localDom = data.XDom.localSubdomain();
         forall (i, f) in localDom with (ref data) {
           data.Xb[i, f] = findBin(data.X[i, f], localCuts, f, nCuts): uint(8);
+        }
+      }
+    }
+
+    logInfo("binning: sampled " + totalSamples:string
+          + " rows across " + numLocales:string
+          + " locale(s), " + nCuts:string + " cuts/feature");
+
+    var bc = new BinCuts(nFeatures=nF);
+    bc.values = cuts;
+    return bc;
+  }
+
+  // ------------------------------------------------------------------
+  // applyBins
+  //
+  // Applies training bin cuts to a new (e.g. test) dataset.
+  // data.Xb is populated in-place; data.X must already be filled.
+  // ------------------------------------------------------------------
+  proc applyBins(ref data: GBMData, bc: BinCuts) {
+    coforall loc in Locales with (ref data) {
+      on loc {
+        var localCuts: [0..#bc.nFeatures, 0..#bc.nCuts] real = bc.values;
+        const localDom = data.XDom.localSubdomain();
+        forall (i, f) in localDom with (ref data) {
+          data.Xb[i, f] = findBin(data.X[i, f], localCuts, f, bc.nCuts): uint(8);
         }
       }
     }

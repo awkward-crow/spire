@@ -7,7 +7,7 @@ BUILD     = build
 #   make CHPL_TARGET_CPU=broadwell
 export CHPL_TARGET_CPU ?= native
 
-TESTS = TestObjectives TestBinning TestHistogram TestSplits TestTree TestBooster
+TESTS = TestObjectives TestBinning TestHistogram TestSplits TestTree TestBooster TestPredict
 
 .PHONY: all run clean $(TESTS)
 

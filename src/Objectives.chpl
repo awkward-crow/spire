@@ -121,6 +121,50 @@ module Objectives {
   }
 
   // ------------------------------------------------------------------
+  // Loss functions — scalar evaluation over prediction/target arrays.
+  // Useful for monitoring training progress and evaluating on test sets.
+  // ------------------------------------------------------------------
+
+  proc mseLoss(F: [] real, y: [] real): real {
+    return (+ reduce [(i) in F.domain] (F[i] - y[i])**2) / F.size: real;
+  }
+
+  proc logLoss(F: [] real, y: [] real): real {
+    const eps = 1e-15;
+    var s: real = 0.0;
+    forall i in F.domain with (+ reduce s) {
+      const p = clamp(sigmoid(F[i]), eps, 1.0 - eps);
+      s += -(y[i] * log(p) + (1.0 - y[i]) * log(1.0 - p));
+    }
+    return s / F.size: real;
+  }
+
+  proc pinballLoss(F: [] real, y: [] real, tau: real): real {
+    var s: real = 0.0;
+    forall i in F.domain with (+ reduce s) {
+      const r = y[i] - F[i];
+      s += if r > 0.0 then tau * r else (tau - 1.0) * r;
+    }
+    return s / F.size: real;
+  }
+
+  // Unified loss dispatch — mirrors computeGradients
+  proc computeLoss(
+      obj : Objective,
+      F   : [] real,
+      y   : [] real,
+      tau : real = 0.5
+  ): real {
+    select obj {
+      when Objective.MSE     do return mseLoss(F, y);
+      when Objective.LogLoss do return logLoss(F, y);
+      when Objective.Pinball do return pinballLoss(F, y, tau);
+      otherwise halt("Unknown objective");
+    }
+    return 0.0;
+  }
+
+  // ------------------------------------------------------------------
   // Unified dispatch — call this from the boosting loop
   // ------------------------------------------------------------------
   proc computeGradients(

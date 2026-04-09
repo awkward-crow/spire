@@ -28,6 +28,7 @@ module Tree {
   use DataLayout;
   use Histogram;
   use Splits;
+  use Logger;
 
   // ------------------------------------------------------------------
   // FittedTree — stores one complete decision tree.
@@ -121,6 +122,11 @@ module Tree {
         const H = + reduce hist.hess[idx, 0, ..];
         tree.isLeaf[idx] = true;
         tree.value[idx]  = leafValue(G, H, lambda);
+        logTrace("early leaf node=" + idx:string
+               + " depth="         + depth:string
+               + " G="             + G:string
+               + " H="             + H:string
+               + " value="         + tree.value[idx]:string);
       }
     }
   }
@@ -145,6 +151,10 @@ module Tree {
         const H = + reduce hist.hess[idx, 0, ..];
         tree.isLeaf[idx] = true;
         tree.value[idx]  = leafValue(G, H, lambda);
+        logTrace("leaf node=" + idx:string
+               + " G="       + G:string
+               + " H="       + H:string
+               + " value="   + tree.value[idx]:string);
       }
     }
   }

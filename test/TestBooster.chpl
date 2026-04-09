@@ -9,6 +9,7 @@
 */
 
 use Booster;
+use Binning;
 use Objectives;
 use DataLayout;
 use SyntheticData;
@@ -43,15 +44,10 @@ proc testMSEDecreases() {
   var cfg = new BoosterConfig(nTrees=10, maxDepth=2, eta=0.3,
                                lambda=1.0, minHess=1.0);
 
-  // MSE = mean((F - y)^2) / 2 — track via sum of squared residuals
-  proc mse(): real {
-    return (+ reduce [(i) in data.rowDom] (data.F[i] - data.y[i])**2)
-           / data.numSamples: real;
-  }
-
-  const lossBefore = mse();
+  computeBins(data);
+  const lossBefore = mseLoss(data.F, data.y);
   boost(data, Objective.MSE, cfg);
-  const lossAfter = mse();
+  const lossAfter = mseLoss(data.F, data.y);
 
   assertTrue("MSE decreases after boosting",   lossAfter < lossBefore);
   assertTrue("final MSE is finite",            isFinite(lossAfter));
@@ -72,19 +68,10 @@ proc testLogLossDecreases() {
   var cfg = new BoosterConfig(nTrees=10, maxDepth=2, eta=0.3,
                                lambda=1.0, minHess=1.0);
 
-  proc logloss(): real {
-    var s: real = 0.0;
-    for i in data.rowDom {
-      const p = 1.0 / (1.0 + exp(-data.F[i]));
-      const pi = max(min(p, 1.0 - 1e-15), 1e-15);
-      s += -(data.y[i] * log(pi) + (1.0 - data.y[i]) * log(1.0 - pi));
-    }
-    return s / data.numSamples: real;
-  }
-
-  const lossBefore = logloss();
+  computeBins(data);
+  const lossBefore = logLoss(data.F, data.y);
   boost(data, Objective.LogLoss, cfg);
-  const lossAfter = logloss();
+  const lossAfter = logLoss(data.F, data.y);
 
   assertTrue("LogLoss decreases after boosting", lossAfter < lossBefore);
   assertTrue("final LogLoss is finite",          isFinite(lossAfter));
@@ -104,18 +91,10 @@ proc testPinballDecreases() {
   var cfg = new BoosterConfig(nTrees=10, maxDepth=2, eta=0.3,
                                lambda=1.0, minHess=1.0, tau=tau);
 
-  proc pinball(): real {
-    var s: real = 0.0;
-    for i in data.rowDom {
-      const r = data.y[i] - data.F[i];
-      s += if r > 0.0 then tau * r else (tau - 1.0) * r;
-    }
-    return s / data.numSamples: real;
-  }
-
-  const lossBefore = pinball();
+  computeBins(data);
+  const lossBefore = pinballLoss(data.F, data.y, tau);
   boost(data, Objective.Pinball, cfg);
-  const lossAfter = pinball();
+  const lossAfter = pinballLoss(data.F, data.y, tau);
 
   assertTrue("Pinball loss decreases after boosting", lossAfter < lossBefore);
   assertTrue("final Pinball loss is finite",          isFinite(lossAfter));
