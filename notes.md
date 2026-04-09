@@ -148,9 +148,33 @@ Order: CSV reader next, then the driver.
 - Row/column subsampling (both LGBM and XGBoost default to subsampling;
   omitting it will widen the accuracy gap on noisy datasets)
 - Missing value handling (required for most real-world datasets)
-- **Early stopping** — currently `nTrees` is a fixed hyperparameter; the
-  booster always builds exactly that many trees. LightGBM/XGBoost halt early
-  if validation loss hasn't improved for `earlyStoppingRounds` consecutive
-  trees. Natural to add once the comparison driver has a validation set to
-  monitor; would require passing a `valData: GBMData` to `boost` and a
-  `earlyStoppingRounds: int` field in `BoosterConfig`.
+
+- **Early stopping** — controls how many *trees* are added to the ensemble.
+  Halts training when validation loss has not improved for `earlyStoppingRounds`
+  consecutive rounds. Operates at the inter-tree level. Requires a held-out
+  validation set passed to `boost` and an `earlyStoppingRounds: int` field in
+  `BoosterConfig`. Natural to add once the comparison driver is in place.
+
+- **Min-split-gain pruning** — controls the shape of individual *trees*.
+  Skips splitting a node when the best available gain is below a threshold
+  (`min_split_gain` in LightGBM). Operates at the intra-tree level. A node
+  that would produce near-zero gain becomes a leaf early, regardless of
+  `maxDepth`. Low implementation cost: add a `minGain: real = 0.0` field to
+  `BoosterConfig` and check `gain > cfg.minGain` before accepting a split in
+  `findBestSplits`. Recovers most of the accuracy benefit of leaf-wise growth
+  without requiring a priority queue.
+
+- **Leaf-wise tree growth** — LightGBM's primary accuracy advantage over
+  level-wise. Instead of splitting all nodes at depth d, maintain a priority
+  queue of candidate leaves and always expand the highest-gain leaf. Produces
+  asymmetric trees that follow the data; same `num_leaves` budget, more
+  variance explained per leaf than level-wise at the same depth.
+
+  **Distributed angle:** in Chapel's PGAS model, building histograms for a
+  *batch* of k leaves costs the same as building for 1 — all locales do one
+  pass over their rows scattering into k node buckets, with a single barrier.
+  The natural Chapel implementation is therefore *batched leaf-wise*: process
+  the top-k leaves per round (pruning low-gain candidates), expanding multiple
+  nodes per histogram pass. This recovers the communication efficiency of
+  level-wise while approximating the accuracy of leaf-wise. The subtraction
+  trick still applies within each batch.
