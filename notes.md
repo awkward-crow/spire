@@ -12,13 +12,15 @@
 ## Build & Run
 
 ```bash
-# Single locale
-chpl TestObjectives.chpl Objectives.chpl DataLayout.chpl SyntheticData.chpl -o test_obj
-./test_obj
+cd test
 
-# Multi-locale (requires Chapel built with GASNet or PGAS fabric)
-./test_obj -nl 4
+make               # build all tests
+make run           # build and run all tests
+make TestObjectives  # build one test
+./TestObjectives -nl 4  # multi-locale (requires GASNet)
 ```
+
+To add a new test, append its module name to `TESTS` in `test/Makefile`.
 
 ## Design Notes
 

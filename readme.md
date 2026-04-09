@@ -3,14 +3,16 @@
 ## usage
 
 ```sh
-chpl TestObjectives.chpl Objectives.chpl DataLayout.chpl -o test_obj
-./test_obj
+cd test
+make               # build all tests
+make run           # build and run all tests
+make TestObjectives  # build one test
 ```
 
-Or,
+Or, after compiling for multi-locale,
 
 ```sh
-./test_obj -nl 4
+./TestObjectives -nl 4
 ```
 
 ## see also

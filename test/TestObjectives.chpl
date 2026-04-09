@@ -5,11 +5,11 @@
   against known analytical values on small hand-crafted inputs.
 
   Run single-locale:
-    chpl TestObjectives.chpl Objectives.chpl DataLayout.chpl -o test_obj
+    chpl TestObjectives.chpl -M ../src -o test_obj
     ./test_obj
 
   Run multi-locale (e.g. 4 locales with gasnet):
-    chpl TestObjectives.chpl Objectives.chpl DataLayout.chpl -o test_obj
+    chpl TestObjectives.chpl -M ../src -o test_obj
     ./test_obj -nl 4
 
   Expected output: all assertions pass, summary printed per objective.
