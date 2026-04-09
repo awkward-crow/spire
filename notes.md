@@ -82,6 +82,30 @@ negligible — a misplaced bin boundary shifts one split threshold slightly,
 which the next boosting round corrects. Exact quantiles are not worth the
 implementation cost here.
 
+### SIMD / vectorization scope
+
+`CHPL_TARGET_CPU=native` (set in `test/Makefile`) enables auto-vectorization
+for the build machine's CPU at zero implementation cost.  Beyond that, the
+three hot loops have different vectorization prospects:
+
+| Loop | Vectorizable? | Approach |
+|---|---|---|
+| Gradient/hessian computation | Yes — element-wise over contiguous arrays | Auto-vectorizes with `native` |
+| Binning application | Yes — independent binary search per sample | Auto-vectorizes with `native` |
+| Split finding prefix scan | Partially — independent across features, sequential within | `extern C` AVX2 horizontal prefix sum (future) |
+| Histogram accumulation | No — data-dependent scatter (`accumGrad[node,f,b] +=`) | Not worth pursuing; focus on cache layout instead |
+
+The split finding scan (255 iterations per feature) is the most worthwhile
+manual SIMD target — LightGBM uses AVX2 horizontal sums there for ~4–8×.
+Deferred until `Splits.chpl` is written and profiled.
+
+The histogram accumulation scatter is the fundamental bottleneck.  AVX-512
+has scatter instructions but they are slow on current hardware.  Better
+returns come from the memory layout benchmark (see below).
+
+Override `CHPL_TARGET_CPU` for heterogeneous clusters where node CPUs differ,
+e.g. `make CHPL_TARGET_CPU=broadwell`.
+
 ### Histogram memory layout
 
 **Decision: deferred — implement `[node, feature, bin]` first, benchmark,

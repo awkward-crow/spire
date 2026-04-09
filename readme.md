@@ -23,6 +23,14 @@ make TestObjectives
 ./build/TestObjectives -nl 4
 ```
 
+By default tests are compiled with `CHPL_TARGET_CPU=native`, optimising for
+the build machine's CPU.  On a cluster with a specific microarchitecture,
+override this:
+
+```sh
+make CHPL_TARGET_CPU=broadwell
+```
+
 ## see also
 
  - file `notes.md`
