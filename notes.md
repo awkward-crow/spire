@@ -11,7 +11,8 @@
 | `Binning.chpl` | *(Phase 2)* Sampling-based quantile binning → `uint8` bin matrix |
 | `Histogram.chpl` | *(Phase 2)* Histogram accumulation and subtraction trick |
 | `Splits.chpl` | *(Phase 2)* Split finding, `SplitInfo` record |
-| `Tree.chpl` | *(Phase 2)* Node assignment, leaf values, predict |
+| `Tree.chpl` | *(Phase 2)* Node assignment, leaf values, `applyTree` |
+| `Booster.chpl` | *(Phase 2)* End-to-end training loop, `BoosterConfig`, `boost` |
 
 ## Build & Run
 
@@ -119,11 +120,31 @@ Benchmark before optimising.
 
 ## Next Steps
 
-Phase 2 — Histogram builder:
-- `Binning.chpl`: sampling-based quantile binning → `uint8` `Xb` matrix
-- `Histogram.chpl`: `buildHistograms`, subtraction trick
-- `Splits.chpl`: `findBestSplits`, `SplitInfo` record
-- `Tree.chpl`: node assignment, leaf values, predict
+### Phase 3 — Comparison against LightGBM / XGBoost
 
-Open question remaining:
+Critical path to a benchmark on a standard dataset (e.g. California Housing,
+Titanic):
+
+1. **CSV reader** (`src/CSVReader.chpl`) — load a dense float/label matrix from
+   a text file into `GBMData`.  Even a minimal implementation (no missing
+   values, all columns numeric) unblocks real-dataset testing.
+
+2. **`predict` on held-out data** — a `predict(trees: [] FittedTree, data: GBMData): [] real`
+   procedure that applies the fitted ensemble to a new dataset without
+   modifying `data.F`.  Can be tested against the synthetic data we already
+   have.
+
+3. **Comparison driver** (`src/` or standalone) — load dataset, train/test
+   split, train the Chapel GBM, print RMSE (regression) or log-loss
+   (classification) on the test set alongside equivalent LightGBM/XGBoost
+   numbers for direct comparison.
+
+Order: `predict` first (no I/O dependency, testable immediately), then CSV
+reader, then the driver.
+
+### Open questions
+
 - Histogram memory layout benchmark (`[node, feature, bin]` vs `[feature, bin, node]`)
+- Row/column subsampling (both LGBM and XGBoost default to subsampling;
+  omitting it will widen the accuracy gap on noisy datasets)
+- Missing value handling (required for most real-world datasets)
