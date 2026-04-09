@@ -39,6 +39,7 @@ module DataLayout {
     // Feature matrix — row-major block distribution over samples
     var XDom   : domain(2) dmapped new blockDist(boundingBox={0..#numSamples, 0..#numFeatures});
     var X      : [XDom] real;
+    var Xb     : [XDom] uint(8);  // bin indices — populated by Binning.computeBins()
 
     // 1-D arrays — same block distribution over the sample dimension
     var rowDom : domain(1) dmapped new blockDist(boundingBox={0..#numSamples});

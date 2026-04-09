@@ -1,4 +1,4 @@
-# Chapel GBM Prototype — Phase 1: Data Layout & Objectives
+# Chapel GBM Prototype
 
 ## Files
 
@@ -8,6 +8,10 @@
 | `DataLayout.chpl` | Distributed array layout (`GBMData` record, `printDataSummary`) |
 | `SyntheticData.chpl` | Synthetic dataset generators (classification, regression) |
 | `TestObjectives.chpl` | Unit tests + distributed smoke test |
+| `Binning.chpl` | *(Phase 2)* Sampling-based quantile binning → `uint8` bin matrix |
+| `Histogram.chpl` | *(Phase 2)* Histogram accumulation and subtraction trick |
+| `Splits.chpl` | *(Phase 2)* Split finding, `SplitInfo` record |
+| `Tree.chpl` | *(Phase 2)* Node assignment, leaf values, predict |
 
 ## Build & Run
 
@@ -17,7 +21,8 @@ cd test
 make               # build all tests
 make run           # build and run all tests
 make TestObjectives  # build one test
-./TestObjectives -nl 4  # multi-locale (requires GASNet)
+./build/TestObjectives -nl 4  # multi-locale (requires GASNet)
+make clean         # remove build/
 ```
 
 To add a new test, append its module name to `TESTS` in `test/Makefile`.
@@ -54,15 +59,47 @@ For time series applications, training separate models at e.g.
 `tau = 0.1` and `tau = 0.9` gives an 80% prediction interval directly
 from the GBM output without any distributional assumptions.
 
+### Distributed quantile binning — sampling approach
+
+**Decision: use sampling.**
+
+Each locale draws a random subset of its local rows (e.g. `sqrt(nLocalRows)`
+or a fixed cap), communicates those values to locale 0, which sorts each
+feature column and picks 255 evenly-spaced quantile boundaries.  The
+resulting `uint8` cut-points are broadcast back and each locale bins its
+own rows independently.
+
+Alternatives considered:
+
+| Algorithm | Accuracy | Complexity | Why not chosen |
+|---|---|---|---|
+| **Sampling** *(chosen)* | Approximate; improves with sample size | Low | Simple, no streaming state, same approach as XGBoost/LightGBM default |
+| Greenwald-Khanna | ε-exact | High | Non-trivial merge step; overkill for initial binning pass |
+| t-digest | Approximate, good tails | Medium | Better tail accuracy than sampling but adds a dependency and complexity |
+
+For typical GBM use (255 bins, millions of rows) sampling error is
+negligible — a misplaced bin boundary shifts one split threshold slightly,
+which the next boosting round corrects. Exact quantiles are not worth the
+implementation cost here.
+
+### Histogram memory layout
+
+**Decision: deferred — implement `[node, feature, bin]` first, benchmark,
+then try `[feature, bin, node]` if cache misses are a bottleneck.**
+
+During histogram accumulation the inner loop touches one `(node, feature,
+bin)` cell per sample. With `[node, feature, bin]` layout, samples in the
+same node and feature land in adjacent memory; with `[feature, bin, node]`
+the node dimension is innermost, which may suit split-finding better.
+Benchmark before optimising.
+
 ## Next Steps
 
 Phase 2 — Histogram builder:
-- Quantile binning: bin features into uint8 buckets at startup
-- `buildHistograms`: distributed forall over rows, accumulate
-  (grad_sum, hess_sum) per (node, feature, bin)
-- `findBestSplits`: pure local arithmetic on completed histograms
-- `updateNodeAssign`: reroute each sample left/right based on split
+- `Binning.chpl`: sampling-based quantile binning → `uint8` `Xb` matrix
+- `Histogram.chpl`: `buildHistograms`, subtraction trick
+- `Splits.chpl`: `findBestSplits`, `SplitInfo` record
+- `Tree.chpl`: node assignment, leaf values, predict
 
-Open questions to resolve in Phase 2:
-1. Histogram memory layout: `[node, feature, bin]` vs `[feature, bin, node]`
-2. Distributed quantile binning algorithm: sampling vs Greenwald-Khanna vs t-digest
+Open question remaining:
+- Histogram memory layout benchmark (`[node, feature, bin]` vs `[feature, bin, node]`)

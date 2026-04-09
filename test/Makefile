@@ -1,17 +1,21 @@
-CHPL    = chpl
+CHPL      = chpl
 CHPLFLAGS = -M ../src
+BUILD     = build
 
-TESTS = TestObjectives
+TESTS = TestObjectives TestBinning
 
 .PHONY: all run clean $(TESTS)
 
 all: $(TESTS)
 
-$(TESTS): %: %.chpl
-	$(CHPL) $(CHPLFLAGS) $< -o $@
+$(BUILD):
+	mkdir -p $(BUILD)
+
+$(TESTS): %: %.chpl | $(BUILD)
+	$(CHPL) $(CHPLFLAGS) $< -o $(BUILD)/$@
 
 run: all
-	$(foreach t, $(TESTS), ./$(t);)
+	$(foreach t, $(TESTS), $(BUILD)/$(t);)
 
 clean:
-	rm -f $(TESTS)
+	rm -rf $(BUILD)
