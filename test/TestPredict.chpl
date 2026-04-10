@@ -39,9 +39,9 @@ proc testPredictMatchesF() {
   var cfg  = new BoosterConfig(nTrees=5, maxDepth=2, eta=0.3);
 
   computeBins(data);
-  const trees = boost(data, Objective.MSE, cfg);
+  const (trees, base) = boost(data, Objective.MSE, cfg);
 
-  const preds = predict(trees, data);
+  const preds = predict(trees, data, base);
 
   var maxDiff: real = 0.0;
   for i in data.rowDom do
@@ -67,13 +67,13 @@ proc testPredictOnTestSet() {
 
   var cfg = new BoosterConfig(nTrees=10, maxDepth=2, eta=0.3);
 
-  const cuts  = computeBins(train);
-  const trees = boost(train, Objective.MSE, cfg);
+  const cuts         = computeBins(train);
+  const (trees, base) = boost(train, Objective.MSE, cfg);
 
   // Apply training cuts to the test set
   applyBins(test, cuts);
 
-  const preds = predict(trees, test);
+  const preds = predict(trees, test, base);
 
   var allFinite = true;
   for i in test.rowDom {
@@ -105,11 +105,11 @@ proc testPredictClassification() {
 
   var cfg = new BoosterConfig(nTrees=5, maxDepth=2, eta=0.3);
 
-  const cuts  = computeBins(train);
-  const trees = boost(train, Objective.LogLoss, cfg);
+  const cuts          = computeBins(train);
+  const (trees, base) = boost(train, Objective.LogLoss, cfg);
 
   applyBins(test, cuts);
-  const logits = predict(trees, test);
+  const logits = predict(trees, test, base);
 
   var allFinite = true;
   for i in test.rowDom {

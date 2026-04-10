@@ -97,15 +97,15 @@ proc main() throws {
     minHess  = minHess
   );
 
-  const cuts  = computeBins(train, seed=seed);
-  const trees = boost(train, Objective.MSE, cfg);
+  const cuts          = computeBins(train, seed=seed);
+  const (trees, base) = boost(train, Objective.MSE, cfg);
 
   // ---- Evaluate ---------------------------------------------------
-  const trainPreds = predict(trees, train);
+  const trainPreds = predict(trees, train, base);
   const trainRMSE  = rmse(trainPreds, train.y);
 
   applyBins(test, cuts);
-  const testPreds = predict(trees, test);
+  const testPreds = predict(trees, test, base);
   const testRMSE  = rmse(testPreds, test.y);
 
   writeln("  RMSE (train): ", trainRMSE);

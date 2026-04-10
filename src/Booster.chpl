@@ -28,6 +28,7 @@ module Booster {
   use Splits;
   use Tree;
   use Logger;
+  use Sort;
 
   // ------------------------------------------------------------------
   // BoosterConfig
@@ -39,6 +40,48 @@ module Booster {
     var lambda   : real = 1.0;    // L2 regularisation on leaf weights
     var minHess  : real = 1.0;    // minimum hessian sum per leaf
     var tau      : real = 0.5;    // quantile level (Pinball loss only)
+  }
+
+  // ------------------------------------------------------------------
+  // initF
+  //
+  // Initialises data.F to the optimal constant prediction for the given
+  // objective before any trees are added.  This is critical for Pinball
+  // loss: starting from F=0 with all y > 0 makes every gradient
+  // identically -tau, giving near-zero split gain and extremely slow
+  // convergence.  MSE and LogLoss are less sensitive but also benefit.
+  //
+  //   MSE     : F = mean(y)
+  //   Pinball : F = tau-th quantile of y
+  //   LogLoss : F = log(p_bar / (1 - p_bar)),  p_bar = mean(y)
+  // ------------------------------------------------------------------
+  private proc initF(ref data: GBMData, obj: Objective, tau: real): real {
+    var baseScore: real;
+    select obj {
+      when Objective.MSE {
+        baseScore = (+ reduce data.y) / data.numSamples: real;
+      }
+      when Objective.Pinball {
+        // Gather y to a local array, sort, pick the tau-th quantile.
+        var yLocal: [0..#data.numSamples] real;
+        forall i in data.rowDom do yLocal[i] = data.y[i];
+        sort(yLocal);
+        const qIdx = min((tau * data.numSamples: real): int,
+                         data.numSamples - 1);
+        baseScore = yLocal[qIdx];
+        logInfo("initF: Pinball tau=" + tau:string
+              + " baseline=" + baseScore:string);
+      }
+      when Objective.LogLoss {
+        use Math;
+        const pMean = (+ reduce data.y) / data.numSamples: real;
+        const p     = max(1e-7, min(1.0 - 1e-7, pMean));
+        baseScore = log(p / (1.0 - p));
+      }
+      otherwise halt("initF: unknown objective");
+    }
+    data.F = baseScore;
+    return baseScore;
   }
 
   // ------------------------------------------------------------------
@@ -71,11 +114,15 @@ module Booster {
       ref data : GBMData,
       obj      : Objective,
       cfg      : BoosterConfig
-  ): [] FittedTree {
+  ) {
 
     // Caller is responsible for calling computeBins(data) before boost()
     // so that data.Xb is populated.  This keeps binning explicit and
     // allows the same BinCuts to be reused for test-set prediction.
+
+    // Initialise F to the optimal constant for this objective so that
+    // the first gradient computation is informative.
+    const baseScore = initF(data, obj, cfg.tau);
 
     var trees: [0..#cfg.nTrees] FittedTree;
 
@@ -123,7 +170,7 @@ module Booster {
             + " trainLoss=" + computeLoss(obj, data.F, data.y, cfg.tau):string);
     }
 
-    return trees;
+    return (trees, baseScore);
   }
 
   // ------------------------------------------------------------------
@@ -134,8 +181,9 @@ module Booster {
   // call applyBins(testData, cuts) before predicting on new data).
   // data.F is NOT modified.
   // ------------------------------------------------------------------
-  proc predict(trees: [] FittedTree, data: GBMData): [] real {
-    var preds: [data.rowDom] real = 0.0;
+  proc predict(trees: [] FittedTree, data: GBMData,
+               baseScore: real = 0.0): [] real {
+    var preds: [data.rowDom] real = baseScore;
     for t in trees.domain {
       applyTree(data, trees[t], preds);
     }

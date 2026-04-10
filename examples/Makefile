@@ -4,7 +4,7 @@ BUILD     = build
 
 export CHPL_TARGET_CPU ?= native
 
-PROGRAMS = CaliforniaHousing
+PROGRAMS = CaliforniaHousing Bicycle
 
 $(BUILD):
 	mkdir -p $(BUILD)
