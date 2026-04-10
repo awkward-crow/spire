@@ -38,7 +38,6 @@ config const maxDepth  : int    = 4;
 config const eta       : real   = 0.1;
 config const lambda    : real   = 1.0;
 config const trainFrac : real   = 0.8;
-config const seed      : int    = 42;
 
 // ------------------------------------------------------------------
 // trainTestSplit
@@ -80,7 +79,7 @@ proc main() throws {
   writeln();
 
   // ---- Bin once; reuse cuts for both quantile models --------------
-  const cuts = computeBins(train, seed=seed);
+  const cuts = computeBins(train);
   applyBins(test, cuts);
 
   // ---- Train one model per quantile -------------------------------

@@ -206,10 +206,42 @@ and a heavily skewed distribution (most hours have low counts), poor bin
 placement at the tails hurts quantile models disproportionately — the q90
 model in particular is trying to predict rare high-count events.
 
-Candidate next steps to close the gap:
-- Switch to frequency-based binning (sort feature values, pick evenly-spaced
-  quantile cut points from the empirical CDF rather than random sampling)
-- Increase `nTrees` — quantile models need more rounds to converge than MSE
+### t-digest binning (implemented, single-locale result unchanged)
+
+Replaced the sqrt(nLocalRows) random-sampling step in Binning.chpl with a
+full t-digest pass over all local rows, merged at locale 0.  New files:
+`src/TDigest.chpl` (buildDigest, mergeAndCompress, digestQuantile).  `seed`
+parameter removed from computeBins() — t-digest is deterministic.
+
+Single-locale Bicycle results after the change: **identical**.
+
+This is expected: with ~13,900 training rows and 12 features, 118 random
+samples were already sufficient to capture the X-feature distributions.
+The performance gap with LightGBM is not a binning issue.
+
+The t-digest change is still the right investment for multi-locale runs where
+each locale sees only n/L rows and sqrt(n/L) would be tiny.  The communication
+cost is now O(numLocales × nFeatures × MAX_CENTS) centroids regardless of
+dataset size, versus O(numLocales × sqrt(n/L)) raw values before.
+
+### Root cause of Pinball gap vs LightGBM
+
+The Pinball gradient is a constant: −τ when under-predicting, (1−τ) when
+over-predicting — no information about the magnitude of the error.  Each leaf's
+optimal weight ≈ τ (for an under-predicting leaf), so with eta=0.1 each tree
+contributes only ~0.01 update per sample.  After 50 trees the cumulative
+correction is small relative to the target-variable scale (0–977 counts/hour).
+
+LightGBM achieves 10.46 on the same data with the same number of trees,
+suggesting it handles Pinball convergence more efficiently — possibly via
+gradient scaling, a different leaf-weight normalisation, or internal
+step-size adaptation.
+
+Candidates to investigate:
+- Leaf weight formula: check src/Splits.chpl for the exact expression
+- Gradient normalisation: divide Pinball gradients by tau*(1-tau) to scale
+  comparably to MSE gradients
+- Increase nTrees — quantile models need more rounds than MSE
 
 ---
 

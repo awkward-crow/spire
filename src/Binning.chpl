@@ -4,27 +4,31 @@
   Quantile binning: converts the float64 feature matrix X into a uint8
   bin matrix Xb.  Done once at startup before any boosting rounds.
 
-  Algorithm: sampling.
-    1. Each locale randomly samples sqrt(nLocalRows) rows.
-    2. Sampled values are gathered to locale 0.
-    3. Locale 0 sorts each feature column and picks MAX_BINS-1 evenly-
-       spaced quantile cut-points.
+  Algorithm: t-digest per locale, merge at locale 0.
+    1. Each locale builds one TDigest per feature over ALL its local rows.
+    2. Centroid arrays are PUT to locale 0.
+    3. Locale 0 merges the per-locale digests (mergeAndCompress) and
+       extracts MAX_BINS-1 evenly-spaced quantile cut-points.
     4. Cut-points are broadcast; each locale bins its own rows locally.
 
-  Alternatives considered (see notes.md):
-    - Greenwald-Khanna: epsilon-exact streaming quantiles, complex merge.
-    - t-digest: better tail accuracy, moderate complexity.
-  Sampling matches XGBoost/LightGBM defaults; bin boundary error is
-  self-correcting across boosting rounds.
+  This replaces the earlier sqrt(nLocalRows) random-sampling approach.
+  Using all local rows for the digest gives accurate tail cut-points,
+  which is important for Pinball/quantile objectives (tau near 0 or 1).
+  Communication cost is O(numLocales × nFeatures × MAX_CENTS) centroid
+  records rather than O(numLocales × sqrt(n) × nFeatures) raw values;
+  the two are comparable at moderate locale counts and the digest is
+  strictly more accurate.
+
+  See TDigest.chpl for the k1-scale algorithm and tail-accuracy argument.
 */
 
 module Binning {
 
   use DataLayout;
-  use Random;
   use Sort;
   use Math;
   use Logger;
+  use TDigest;
 
   param MAX_BINS = 255;   // bins per feature; uint(8) covers 0..254
 
@@ -53,73 +57,89 @@ module Binning {
   // Populates data.Xb with bin indices in 0..MAX_BINS-1.
   // Call once before training begins.
   // ------------------------------------------------------------------
-  proc computeBins(ref data: GBMData, seed: int = 42): BinCuts {
-    const nF    = data.numFeatures;
-    const nCuts = MAX_BINS - 1;   // 254 cut-points → 255 bins
+  proc computeBins(ref data: GBMData): BinCuts {
+    const nF         = data.numFeatures;
+    const nCuts      = MAX_BINS - 1;       // 254 cut-points → 255 bins
+    const compression = 500.0;             // k1 max centroids ≈ 250 > 254? —
+                                           // tail singletons push above C/2,
+                                           // so 500 is comfortably sufficient
 
     // ------------------------------------------------------------------
-    // Step 1: Decide how many rows each locale will sample
+    // Step 1 & 2: Each locale builds one digest per feature from ALL
+    // its local rows, then PUTs the centroid arrays to locale 0.
     // ------------------------------------------------------------------
-    var samplesPerLocale: [0..#numLocales] int;
-    coforall loc in Locales with (ref samplesPerLocale) {
+    var allCents  : [0..#numLocales, 0..#nF, 0..#MAX_CENTS] Centroid;
+    var allNCents : [0..#numLocales, 0..#nF] int;
+    var allWeights: [0..#numLocales, 0..#nF] real;
+
+    coforall loc in Locales with (ref allCents, ref allNCents, ref allWeights) {
       on loc {
-        const nLocal = data.XDom.localSubdomain().dim(0).size;
-        samplesPerLocale[loc.id] = max(1, sqrt(nLocal: real): int);
-      }
-    }
+        const localRows = data.XDom.localSubdomain().dim(0);
+        const nLocal    = localRows.size;
 
-    const totalSamples = + reduce samplesPerLocale;
+        var localCents  : [0..#nF, 0..#MAX_CENTS] Centroid;
+        var localNCents : [0..#nF] int;
+        var localWeights: [0..#nF] real;
 
-    // Prefix-sum offsets so each locale writes to a unique row slice
-    var offsets: [0..#numLocales] int;
-    for l in 1..<numLocales do
-      offsets[l] = offsets[l-1] + samplesPerLocale[l-1];
-
-    // ------------------------------------------------------------------
-    // Step 2: Each locale fills its slice of the gather buffer (PUT to locale 0)
-    // ------------------------------------------------------------------
-    var gathered: [0..#totalSamples, 0..#nF] real;
-
-    coforall loc in Locales {
-      on loc {
-        const nSamp    = samplesPerLocale[loc.id];
-        const off      = offsets[loc.id];
-        const rowRange = data.XDom.localSubdomain().dim(0);
-        var   rng      = new randomStream(real, seed = seed + loc.id);
-
-        for s in 0..#nSamp {
-          const row = rowRange.low +
-                      (rng.next() * rowRange.size: real): int;
-          for f in 0..#nF do
-            gathered[off + s, f] = data.X[row, f];
+        // Extract each feature column into a 0-indexed buffer and digest it
+        var col: [0..#nLocal] real;
+        for f in 0..#nF {
+          forall (s, i) in zip(0..#nLocal, localRows) do
+            col[s] = data.X[i, f];
+          buildDigest(col, compression,
+                      localCents[f, ..], localNCents[f], localWeights[f]);
         }
+
+        // PUT results to locale 0's storage
+        allCents[loc.id, .., ..]  = localCents;
+        allNCents[loc.id, ..]     = localNCents;
+        allWeights[loc.id, ..]    = localWeights;
       }
     }
 
     // ------------------------------------------------------------------
-    // Step 3: Sort each feature column and pick quantile cut-points
+    // Step 3: Locale 0 merges digests and extracts cut-points.
     // ------------------------------------------------------------------
     var cuts: [0..#nF, 0..#nCuts] real;
 
     on Locales[0] {
-      var col: [0..#totalSamples] real;
+      // Scratch buffers — reused across features
+      var totalBuf : [0..#(numLocales * MAX_CENTS)] Centroid;
+      var merged   : [0..#MAX_CENTS] Centroid;
+      var mergedN  : int;
+
       for f in 0..#nF {
-        for s in 0..#totalSamples do col[s] = gathered[s, f];
-        sort(col);
+        // Gather centroid contributions for this feature
+        var nTotal = 0;
+        var totalW = 0.0;
+        for l in 0..#numLocales {
+          const nc = allNCents[l, f];
+          for c in 0..#nc {
+            totalBuf[nTotal] = allCents[l, f, c];
+            nTotal += 1;
+          }
+          totalW += allWeights[l, f];
+        }
+
+        mergeAndCompress(totalBuf, nTotal, totalW, compression,
+                         merged, mergedN);
+
+        logInfo("binning: feature=" + f:string
+              + " centroids=" + mergedN:string
+              + " totalW=" + totalW:string);
+
         for b in 0..#nCuts {
-          const pos = ((b + 1): real / MAX_BINS: real
-                        * totalSamples: real): int;
-          cuts[f, b] = col[min(pos, totalSamples - 1)];
+          const q  = (b + 1): real / MAX_BINS: real;
+          cuts[f, b] = digestQuantile(merged, mergedN, totalW, q);
         }
       }
     }
 
     // ------------------------------------------------------------------
-    // Step 4: Each locale bins its own rows using a local copy of cuts
+    // Step 4: Each locale bins its own rows using a local copy of cuts.
     // ------------------------------------------------------------------
     coforall loc in Locales with (ref data) {
       on loc {
-        // Bulk-fetch cuts once to avoid per-sample remote GETs in the hot loop
         var localCuts: [0..#nF, 0..#nCuts] real = cuts;
         const localDom = data.XDom.localSubdomain();
         forall (i, f) in localDom with (ref data) {
@@ -128,9 +148,9 @@ module Binning {
       }
     }
 
-    logInfo("binning: sampled " + totalSamples:string
-          + " rows across " + numLocales:string
-          + " locale(s), " + nCuts:string + " cuts/feature");
+    logInfo("binning: t-digest compression=" + compression:string
+          + " locales=" + numLocales:string
+          + " cuts/feature=" + nCuts:string);
 
     var bc = new BinCuts(nFeatures=nF);
     bc.values = cuts;

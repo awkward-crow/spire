@@ -34,7 +34,6 @@ config const maxDepth  : int    = 6;
 config const eta       : real   = 0.1;
 config const lambda    : real   = 1.0;
 config const trainFrac : real   = 0.8;
-config const seed      : int    = 42;
 
 // ------------------------------------------------------------------
 // rmse
@@ -94,7 +93,7 @@ proc main() throws {
     lambda   = lambda
   );
 
-  const cuts     = computeBins(train, seed=seed);
+  const cuts     = computeBins(train);
   const ensemble = boost(train, new MSE(), cfg);
 
   // ---- Evaluate ---------------------------------------------------
