@@ -50,6 +50,10 @@ mkdir -p data
       coverage:     82.3%  (target 80%)
       mean width:   186.3 counts/hour
 
+### chapel (d)gbm
+
+see `../refactor.md`
+
 
 ## California housing 
 
@@ -78,8 +82,22 @@ mkdir -p data
     Samples: 20640  Features: 8
     Train: 16512  Test: 4128
 
-      RMSE (train): 0.4154
-      RMSE (test):  0.4764
+      RMSE (train): 0.5167
+      RMSE (test):  0.5361
+
+### chapel (d)gbm
+
+```sh
+./build/CaliforniaHousing  --nTrees=50 --maxDepth=4
+```
+    === California Housing Regression — Chapel GBM ===
+    Locales: 1
+
+    Samples: 20640  Features: 8
+    Train: 16512  Test: 4128
+
+      RMSE (train): 0.521041
+      RMSE (test):  0.537284
 
 
 ### end

@@ -42,7 +42,8 @@ proc testConservation() {
   writeln("\n--- histogram conservation ---");
 
   var data = makeSyntheticRegression(nSamples=500, nFeatures=4);
-  computeGradients(Objective.MSE, data.F, data.y, data.grad, data.hess);
+  var mse = new MSE();
+  mse.gradients(data.F, data.y, data.grad, data.hess);
   computeBins(data);
 
   // All samples in node 0
@@ -76,7 +77,8 @@ proc testSubtraction() {
   writeln("\n--- subtraction trick ---");
 
   var data = makeSyntheticRegression(nSamples=500, nFeatures=4);
-  computeGradients(Objective.MSE, data.F, data.y, data.grad, data.hess);
+  var mse = new MSE();
+  mse.gradients(data.F, data.y, data.grad, data.hess);
   computeBins(data);
 
   // Split: even → node 0, odd → node 1

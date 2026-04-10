@@ -1,27 +1,30 @@
 /*
   Objectives.chpl
   ---------------
-  Gradient and hessian computation for GBM training objectives.
+  Gradient boosting objectives implemented as Chapel records satisfying
+  the GBMObjective interface.
 
-  Supported:
-    - MSE          : mean squared error (regression baseline)
-    - LogLoss      : binary cross-entropy (classification)
-    - Pinball      : quantile regression (asymmetric pinball loss)
+  Interface methods every objective must provide:
+    initF(ref data: GBMData): real   — set data.F to optimal constant,
+                                       return that value as baseScore
+    gradients(F, y, ref g, ref h)    — compute per-sample gradient/hessian
+    loss(F, y): real                 — scalar loss for training-progress logging
+    defaultMinHess(): real           — minimum hessian sum for valid splits
 
-  All procedures operate on distributed arrays so they work identically
-  single-locale and multi-locale — the forall loops will simply run
-  locally when numLocales == 1.
+  Supported objectives:
+    MSE      — mean squared error (regression)
+    LogLoss  — binary cross-entropy (classification)
+    Pinball  — quantile regression; carries its own tau field
+
+  Standalone helpers mseLoss, logLoss, pinballLoss, sigmoid, clamp remain
+  public module-level procs for use in tests and drivers.
 */
 
 module Objectives {
 
   use Math;
-
-  // ------------------------------------------------------------------
-  // Objective tag — passed through to the boosting loop so it knows
-  // which gradient function to call each round.
-  // ------------------------------------------------------------------
-  enum Objective { MSE, LogLoss, Pinball }
+  use DataLayout;
+  use Sort;
 
   // ------------------------------------------------------------------
   // Helpers
@@ -37,92 +40,108 @@ module Objectives {
     }
   }
 
-  // Clamp predictions to avoid log(0) in log-loss
+  // Clamp to avoid log(0) in log-loss
   inline proc clamp(x: real, lo: real, hi: real): real {
     return min(max(x, lo), hi);
   }
 
   // ------------------------------------------------------------------
   // MSE
-  //   Loss     : 0.5 * (F - y)^2
+  //   Loss     : (F - y)^2
   //   Gradient : F - y
-  //   Hessian  : 1  (constant — standard in GBM)
+  //   Hessian  : 1  (constant)
   // ------------------------------------------------------------------
-  proc computeGradients_MSE(
-      F    : [] real,       // current predictions
-      y    : [] real,       // targets
-      ref grad : [] real,   // output: gradient per sample
-      ref hess : [] real    // output: hessian per sample
-  ) {
-    forall i in F.domain {
-      grad[i] = F[i] - y[i];
-      hess[i] = 1.0;
+  record MSE {
+    proc initF(ref data: GBMData): real {
+      const baseScore = (+ reduce data.y) / data.numSamples: real;
+      data.F = baseScore;
+      return baseScore;
     }
+    proc gradients(F: [] real, y: [] real,
+                   ref g: [] real, ref h: [] real) {
+      forall i in F.domain {
+        g[i] = F[i] - y[i];
+        h[i] = 1.0;
+      }
+    }
+    proc loss(F: [] real, y: [] real): real { return mseLoss(F, y); }
+    proc defaultMinHess(): real             { return 1.0; }
   }
 
   // ------------------------------------------------------------------
-  // Log-loss  (binary classification, labels in {0, 1})
-  //   F[i] is a raw logit (unbounded real)
-  //   p[i] = sigmoid(F[i])
+  // LogLoss  (binary classification, labels in {0, 1})
+  //   F[i] is a raw logit; p[i] = sigmoid(F[i])
   //   Loss     : -y*log(p) - (1-y)*log(1-p)
   //   Gradient : p - y
   //   Hessian  : p * (1 - p)
   // ------------------------------------------------------------------
-  proc computeGradients_LogLoss(
-      F        : [] real,
-      y        : [] real,
-      ref grad : [] real,
-      ref hess : [] real
-  ) {
-    forall i in F.domain {
-      const p = sigmoid(F[i]);
-      grad[i] = p - y[i];
-      hess[i] = max(p * (1.0 - p), 1e-16);  // floor avoids zero hessian
+  record LogLoss {
+    proc initF(ref data: GBMData): real {
+      const pMean = (+ reduce data.y) / data.numSamples: real;
+      const p     = max(1e-7, min(1.0 - 1e-7, pMean));
+      const baseScore = log(p / (1.0 - p));
+      data.F = baseScore;
+      return baseScore;
     }
+    proc gradients(F: [] real, y: [] real,
+                   ref g: [] real, ref h: [] real) {
+      forall i in F.domain {
+        const p = sigmoid(F[i]);
+        g[i] = p - y[i];
+        h[i] = max(p * (1.0 - p), 1e-16);
+      }
+    }
+    proc loss(F: [] real, y: [] real): real { return logLoss(F, y); }
+    proc defaultMinHess(): real             { return 1e-6; }
   }
 
   // ------------------------------------------------------------------
   // Pinball (quantile regression)
-  //   tau in (0, 1) is the target quantile, e.g. 0.9 for 90th percentile
-  //
+  //   tau in (0, 1) is the target quantile level.
   //   Loss     : tau * max(y-F, 0)  +  (1-tau) * max(F-y, 0)
-  //   Gradient : -(tau)      if F < y   (under-predicted)
-  //              +(1 - tau)  if F > y   (over-predicted)
-  //              0           if F == y  (measure-zero, treat as 0)
-  //   Hessian  : constant 1.0  (pinball is piecewise linear — true
-  //              hessian is 0 a.e., but GBM needs a positive curvature
-  //              estimate; 1.0 is the standard approximation used by
-  //              LightGBM and sklearn's HistGradientBoosting)
-  //
-  //   Note on sign convention: we follow XGBoost/LightGBM — gradient
-  //   is the derivative of the *loss* w.r.t. F, so a negative gradient
-  //   means the tree should push F *up*.
+  //   Gradient : -tau      if F < y  (under-predicted)
+  //              (1 - tau) if F > y  (over-predicted)
+  //              0         if F == y (measure-zero)
+  //   Hessian  : constant 1.0  (standard GBM approximation — true hessian
+  //              of piecewise-linear loss is 0 a.e., but GBM needs positive
+  //              curvature; 1.0 matches LightGBM and sklearn)
   // ------------------------------------------------------------------
-  proc computeGradients_Pinball(
-      F        : [] real,
-      y        : [] real,
-      ref grad : [] real,
-      ref hess : [] real,
-      tau      : real        // quantile level, must be in (0, 1)
-  ) {
-    if tau <= 0.0 || tau >= 1.0 then
-      halt("Pinball tau must be in (0, 1), got: " + tau:string);
+  record Pinball {
+    var tau: real;
 
-    forall i in F.domain {
-      const residual = y[i] - F[i];
-      if residual > 0.0 then
-        grad[i] = -tau;           // under-predicted: loss gradient is -tau
-      else if residual < 0.0 then
-        grad[i] = 1.0 - tau;     // over-predicted: loss gradient is (1-tau)
-      else
-        grad[i] = 0.0;
-      hess[i] = 1.0;
+    proc initF(ref data: GBMData): real {
+      var yLocal: [0..#data.numSamples] real;
+      forall i in data.rowDom do yLocal[i] = data.y[i];
+      sort(yLocal);
+      const qIdx = min((tau * data.numSamples: real): int,
+                       data.numSamples - 1);
+      const baseScore = yLocal[qIdx];
+      data.F = baseScore;
+      return baseScore;
     }
+
+    proc gradients(F: [] real, y: [] real,
+                   ref g: [] real, ref h: [] real) {
+      if tau <= 0.0 || tau >= 1.0 then
+        halt("Pinball tau must be in (0, 1), got: " + tau:string);
+      forall i in F.domain {
+        const residual = y[i] - F[i];
+        if residual > 0.0 then
+          g[i] = -tau;
+        else if residual < 0.0 then
+          g[i] = 1.0 - tau;
+        else
+          g[i] = 0.0;
+        h[i] = 1.0;
+      }
+    }
+
+    proc loss(F: [] real, y: [] real): real { return pinballLoss(F, y, tau); }
+    proc defaultMinHess(): real             { return 1.0; }
   }
 
   // ------------------------------------------------------------------
-  // Loss functions — scalar evaluation over prediction/target arrays.
-  // Useful for monitoring training progress and evaluating on test sets.
+  // Standalone loss functions — useful in tests and drivers
   // ------------------------------------------------------------------
 
   proc mseLoss(F: [] real, y: [] real): real {
@@ -146,41 +165,6 @@ module Objectives {
       s += if r > 0.0 then tau * r else (tau - 1.0) * r;
     }
     return s / F.size: real;
-  }
-
-  // Unified loss dispatch — mirrors computeGradients
-  proc computeLoss(
-      obj : Objective,
-      F   : [] real,
-      y   : [] real,
-      tau : real = 0.5
-  ): real {
-    select obj {
-      when Objective.MSE     do return mseLoss(F, y);
-      when Objective.LogLoss do return logLoss(F, y);
-      when Objective.Pinball do return pinballLoss(F, y, tau);
-      otherwise halt("Unknown objective");
-    }
-    return 0.0;
-  }
-
-  // ------------------------------------------------------------------
-  // Unified dispatch — call this from the boosting loop
-  // ------------------------------------------------------------------
-  proc computeGradients(
-      obj      : Objective,
-      F        : [] real,
-      y        : [] real,
-      ref grad : [] real,
-      ref hess : [] real,
-      tau      : real = 0.5   // only used when obj == Pinball
-  ) {
-    select obj {
-      when Objective.MSE     do computeGradients_MSE(F, y, grad, hess);
-      when Objective.LogLoss do computeGradients_LogLoss(F, y, grad, hess);
-      when Objective.Pinball do computeGradients_Pinball(F, y, grad, hess, tau);
-      otherwise halt("Unknown objective");
-    }
   }
 
 } // module Objectives

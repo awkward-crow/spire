@@ -4,7 +4,7 @@
   Quantile regression driver: trains a Chapel GBM with Pinball loss on
   the UCI Bike Sharing Dataset (hourly counts) and reports:
 
-    - Pinball loss at tau = 0.1, 0.5, 0.9 on train and test sets
+    - Pinball loss at tau = 0.1, 0.9 on train and test sets
     - 80% interval coverage  (fraction of test rows where q10 <= y <= q90)
     - Mean interval width    (q90 - q10, averaged over test set)
 
@@ -16,11 +16,10 @@
 
   Config constants (override on command line, e.g. --nTrees=200):
     dataFile   path to the CSV           [data/bicycle.csv]
-    nTrees     number of boosting rounds [200]
-    maxDepth   maximum tree depth        [6]
+    nTrees     number of boosting rounds [50]
+    maxDepth   maximum tree depth        [4]
     eta        learning rate             [0.1]
     lambda     L2 regularisation        [1.0]
-    minHess    minimum leaf hessian     [1.0]
     trainFrac  fraction used for train  [0.8]
     seed       RNG seed for binning     [42]
 */
@@ -38,7 +37,6 @@ config const nTrees    : int    = 50;
 config const maxDepth  : int    = 4;
 config const eta       : real   = 0.1;
 config const lambda    : real   = 1.0;
-config const minHess   : real   = 1.0;
 config const trainFrac : real   = 0.8;
 config const seed      : int    = 42;
 
@@ -81,39 +79,37 @@ proc main() throws {
   writeln("Train: ", train.numSamples, "  Test: ", test.numSamples);
   writeln();
 
-  // ---- Bin once; reuse cuts for both quantile models ---------
+  // ---- Bin once; reuse cuts for both quantile models --------------
   const cuts = computeBins(train, seed=seed);
   applyBins(test, cuts);
 
   // ---- Train one model per quantile -------------------------------
-  // boost() initialises train.F to the optimal constant (tau-quantile of y)
-  // before training, so no manual reset is needed between models.
-  writeln("Pinball loss:");
-
+  // Each Pinball instance carries its own tau; boost() calls
+  // obj.initF(train) which sets train.F to the tau-quantile of y
+  // before training starts.
   var cfg = new BoosterConfig(
     nTrees   = nTrees,
     maxDepth = maxDepth,
     eta      = eta,
-    lambda   = lambda,
-    minHess  = minHess
+    lambda   = lambda
   );
 
+  writeln("Pinball loss:");
+
   // tau = 0.1
-  cfg.tau = 0.1;
-  const (trees10, base10) = boost(train, Objective.Pinball, cfg);
-  const trainPreds10      = predict(trees10, train, base10);
-  const testPreds10       = predict(trees10, test,  base10);
-  const trainLoss10 = pinballLoss(trainPreds10, train.y, 0.1);
-  const testLoss10  = pinballLoss(testPreds10,  test.y,  0.1);
+  const ensemble10   = boost(train, new Pinball(tau=0.1), cfg);
+  const trainPreds10 = predict(ensemble10, train);
+  const testPreds10  = predict(ensemble10, test);
+  const trainLoss10  = pinballLoss(trainPreds10, train.y, 0.1);
+  const testLoss10   = pinballLoss(testPreds10,  test.y,  0.1);
   writeln("  tau=0.1  pinball (train=", trainLoss10, "  test=", testLoss10, ")");
 
   // tau = 0.9
-  cfg.tau = 0.9;
-  const (trees90, base90) = boost(train, Objective.Pinball, cfg);
-  const trainPreds90      = predict(trees90, train, base90);
-  const testPreds90       = predict(trees90, test,  base90);
-  const trainLoss90 = pinballLoss(trainPreds90, train.y, 0.9);
-  const testLoss90  = pinballLoss(testPreds90,  test.y,  0.9);
+  const ensemble90   = boost(train, new Pinball(tau=0.9), cfg);
+  const trainPreds90 = predict(ensemble90, train);
+  const testPreds90  = predict(ensemble90, test);
+  const trainLoss90  = pinballLoss(trainPreds90, train.y, 0.9);
+  const testLoss90   = pinballLoss(testPreds90,  test.y,  0.9);
   writeln("  tau=0.9  pinball (train=", trainLoss90, "  test=", testLoss90, ")");
 
   writeln();

@@ -40,14 +40,14 @@ proc assertClose(name: string, got: real, expected: real, tol: real = EPS) {
 proc testMSE() {
   writeln("\n--- MSE ---");
 
-  // Predictions and targets
   const n = 4;
   var F    : [0..#n] real = [ 1.0,  0.5, -0.5,  2.0];
   var y    : [0..#n] real = [ 1.0,  1.0,  0.0,  0.5];
   var grad : [0..#n] real;
   var hess : [0..#n] real;
 
-  computeGradients(Objective.MSE, F, y, grad, hess);
+  var mse = new MSE();
+  mse.gradients(F, y, grad, hess);
 
   // grad[i] = F[i] - y[i]
   assertClose("MSE grad[0]",  grad[0],  0.0);   //  1.0 - 1.0
@@ -66,7 +66,6 @@ proc testMSE() {
 proc testLogLoss() {
   writeln("\n--- LogLoss ---");
 
-  // Use simple logit values where sigmoid is easy to compute by hand
   // sigmoid(0) = 0.5, sigmoid(large positive) ≈ 1, sigmoid(large neg) ≈ 0
   const n = 3;
   var F    : [0..#n] real = [ 0.0,   10.0,  -10.0 ];
@@ -74,7 +73,8 @@ proc testLogLoss() {
   var grad : [0..#n] real;
   var hess : [0..#n] real;
 
-  computeGradients(Objective.LogLoss, F, y, grad, hess);
+  var ll = new LogLoss();
+  ll.gradients(F, y, grad, hess);
 
   // grad[0]: sigmoid(0) - 1 = 0.5 - 1.0 = -0.5
   assertClose("LogLoss grad[0]", grad[0], -0.5);
@@ -111,7 +111,8 @@ proc testPinball() {
   var grad : [0..#n] real;
   var hess : [0..#n] real;
 
-  computeGradients(Objective.Pinball, F, y, grad, hess, tau=tau);
+  var pb = new Pinball(tau=tau);
+  pb.gradients(F, y, grad, hess);
 
   assertClose("Pinball grad[0] (under)", grad[0], -0.9);   // F=0.5 < y=1.0
   assertClose("Pinball grad[1] (over)",  grad[1],  0.1);   // F=1.5 > y=1.0
@@ -126,7 +127,8 @@ proc testPinball() {
   const tau2 = 0.5;
   var grad2 : [0..#n] real;
   var hess2 : [0..#n] real;
-  computeGradients(Objective.Pinball, F, y, grad2, hess2, tau=tau2);
+  var pb2 = new Pinball(tau=tau2);
+  pb2.gradients(F, y, grad2, hess2);
   assertClose("Pinball(0.5) grad[0]", grad2[0], -0.5);
   assertClose("Pinball(0.5) grad[1]", grad2[1],  0.5);
 }
@@ -145,7 +147,8 @@ proc testDistributed() {
   var hess : [data.rowDom] real;
 
   // LogLoss on classification data
-  computeGradients(Objective.LogLoss, data.F, data.y, grad, hess);
+  var ll = new LogLoss();
+  ll.gradients(data.F, data.y, grad, hess);
 
   // All gradients for F=0 (initial prediction) and y in {0,1}
   // should be either -0.5 (y=1) or +0.5 (y=0)
@@ -161,7 +164,8 @@ proc testDistributed() {
   const reg = makeSyntheticRegression(nSamples=1000, nFeatures=10);
   var gp : [reg.rowDom] real;
   var hp : [reg.rowDom] real;
-  computeGradients(Objective.Pinball, reg.F, reg.y, gp, hp, tau=0.9);
+  var pb = new Pinball(tau=0.9);
+  pb.gradients(reg.F, reg.y, gp, hp);
 
   // Pinball gradients are in {-tau, 0, 1-tau} = {-0.9, 0, 0.1}
   const gpMin = min reduce gp;

@@ -5,9 +5,9 @@
 
   Workflow under test:
     1. computeBins(trainData)  → BinCuts
-    2. boost(trainData, ...)   → [] FittedTree
+    2. boost(trainData, obj, cfg) → GBMEnsemble
     3. applyBins(testData, cuts)
-    4. predict(trees, testData, eta) → [] real
+    4. predict(ensemble, testData) → [] real
 
   Run:
     chpl TestPredict.chpl -M ../src -o build/TestPredict
@@ -39,9 +39,9 @@ proc testPredictMatchesF() {
   var cfg  = new BoosterConfig(nTrees=5, maxDepth=2, eta=0.3);
 
   computeBins(data);
-  const (trees, base) = boost(data, Objective.MSE, cfg);
+  const ensemble = boost(data, new MSE(), cfg);
 
-  const preds = predict(trees, data, base);
+  const preds = predict(ensemble, data);
 
   var maxDiff: real = 0.0;
   for i in data.rowDom do
@@ -67,13 +67,13 @@ proc testPredictOnTestSet() {
 
   var cfg = new BoosterConfig(nTrees=10, maxDepth=2, eta=0.3);
 
-  const cuts         = computeBins(train);
-  const (trees, base) = boost(train, Objective.MSE, cfg);
+  const cuts     = computeBins(train);
+  const ensemble = boost(train, new MSE(), cfg);
 
   // Apply training cuts to the test set
   applyBins(test, cuts);
 
-  const preds = predict(trees, test, base);
+  const preds = predict(ensemble, test);
 
   var allFinite = true;
   for i in test.rowDom {
@@ -105,11 +105,11 @@ proc testPredictClassification() {
 
   var cfg = new BoosterConfig(nTrees=5, maxDepth=2, eta=0.3);
 
-  const cuts          = computeBins(train);
-  const (trees, base) = boost(train, Objective.LogLoss, cfg);
+  const cuts     = computeBins(train);
+  const ensemble = boost(train, new LogLoss(), cfg);
 
   applyBins(test, cuts);
-  const logits = predict(trees, test, base);
+  const logits = predict(ensemble, test);
 
   var allFinite = true;
   for i in test.rowDom {

@@ -41,12 +41,11 @@ proc testMSEDecreases() {
 
   var data = makeSyntheticRegression(nSamples=500, nFeatures=5);
 
-  var cfg = new BoosterConfig(nTrees=10, maxDepth=2, eta=0.3,
-                               lambda=1.0, minHess=1.0);
+  var cfg = new BoosterConfig(nTrees=10, maxDepth=2, eta=0.3, lambda=1.0);
 
   computeBins(data);
   const lossBefore = mseLoss(data.F, data.y);
-  boost(data, Objective.MSE, cfg);
+  boost(data, new MSE(), cfg);
   const lossAfter = mseLoss(data.F, data.y);
 
   assertTrue("MSE decreases after boosting",   lossAfter < lossBefore);
@@ -65,12 +64,11 @@ proc testLogLossDecreases() {
 
   var data = makeSyntheticClassification(nSamples=500, nFeatures=5);
 
-  var cfg = new BoosterConfig(nTrees=10, maxDepth=2, eta=0.3,
-                               lambda=1.0, minHess=1.0);
+  var cfg = new BoosterConfig(nTrees=10, maxDepth=2, eta=0.3, lambda=1.0);
 
   computeBins(data);
   const lossBefore = logLoss(data.F, data.y);
-  boost(data, Objective.LogLoss, cfg);
+  boost(data, new LogLoss(), cfg);
   const lossAfter = logLoss(data.F, data.y);
 
   assertTrue("LogLoss decreases after boosting", lossAfter < lossBefore);
@@ -88,12 +86,11 @@ proc testPinballDecreases() {
   var data = makeSyntheticRegression(nSamples=500, nFeatures=5);
 
   const tau = 0.9;
-  var cfg = new BoosterConfig(nTrees=10, maxDepth=2, eta=0.3,
-                               lambda=1.0, minHess=1.0, tau=tau);
+  var cfg = new BoosterConfig(nTrees=10, maxDepth=2, eta=0.3, lambda=1.0);
 
   computeBins(data);
   const lossBefore = pinballLoss(data.F, data.y, tau);
-  boost(data, Objective.Pinball, cfg);
+  boost(data, new Pinball(tau=tau), cfg);
   const lossAfter = pinballLoss(data.F, data.y, tau);
 
   assertTrue("Pinball loss decreases after boosting", lossAfter < lossBefore);

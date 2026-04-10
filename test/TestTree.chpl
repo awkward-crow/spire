@@ -141,7 +141,8 @@ proc testEndToEnd() {
 
   var data = makeSyntheticRegression(nSamples=500, nFeatures=5);
   computeBins(data);
-  computeGradients(Objective.MSE, data.F, data.y, data.grad, data.hess);
+  var mse = new MSE();
+  mse.gradients(data.F, data.y, data.grad, data.hess);
 
   const gradSumBefore = + reduce data.grad;
 
@@ -169,7 +170,7 @@ proc testEndToEnd() {
     if !isFinite(data.F[i]) { allFinite = false; break; }
   assertTrue("all F values are finite", allFinite);
 
-  computeGradients(Objective.MSE, data.F, data.y, data.grad, data.hess);
+  mse.gradients(data.F, data.y, data.grad, data.hess);
   const gradSumAfter = + reduce data.grad;
   assertTrue("gradient sum closer to zero after one tree",
              abs(gradSumAfter) <= abs(gradSumBefore) + EPS);

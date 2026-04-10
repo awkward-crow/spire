@@ -39,13 +39,19 @@ X_train, y_train = X[:n_train], y[:n_train]
 X_test,  y_test  = X[n_train:], y[n_train:]
 
 # ---- Hyperparameters — match CaliforniaHousing.chpl ------------------
+# num_leaves=16 forces complete binary trees at max_depth=4 (2^4 = 16),
+# matching Chapel's level-wise growth.  min_child_samples=1 and
+# min_split_gain=0.0 remove LightGBM's additional pruning guards.
 params = {
-    "n_estimators":    100,
-    "max_depth":       6,
-    "learning_rate":   0.1,
-    "reg_lambda":      1.0,
-    "min_child_weight": 1.0,
-    "verbose":         -1,
+    "n_estimators":      50,
+    "max_depth":         4,
+    "num_leaves":        16,
+    "learning_rate":     0.1,
+    "reg_lambda":        1.0,
+    "min_child_weight":  1.0,
+    "min_child_samples": 1,
+    "min_split_gain":    0.0,
+    "verbose":           -1,
 }
 
 # ---- Train -----------------------------------------------------------

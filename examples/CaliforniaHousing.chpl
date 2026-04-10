@@ -16,7 +16,6 @@
     maxDepth   maximum tree depth        [6]
     eta        learning rate             [0.1]
     lambda     L2 regularisation        [1.0]
-    minHess    minimum leaf hessian     [1.0]
     trainFrac  fraction used for train  [0.8]
     seed       RNG seed for binning     [42]
 */
@@ -34,7 +33,6 @@ config const nTrees    : int    = 100;
 config const maxDepth  : int    = 6;
 config const eta       : real   = 0.1;
 config const lambda    : real   = 1.0;
-config const minHess   : real   = 1.0;
 config const trainFrac : real   = 0.8;
 config const seed      : int    = 42;
 
@@ -93,19 +91,18 @@ proc main() throws {
     nTrees   = nTrees,
     maxDepth = maxDepth,
     eta      = eta,
-    lambda   = lambda,
-    minHess  = minHess
+    lambda   = lambda
   );
 
-  const cuts          = computeBins(train, seed=seed);
-  const (trees, base) = boost(train, Objective.MSE, cfg);
+  const cuts     = computeBins(train, seed=seed);
+  const ensemble = boost(train, new MSE(), cfg);
 
   // ---- Evaluate ---------------------------------------------------
-  const trainPreds = predict(trees, train, base);
+  const trainPreds = predict(ensemble, train);
   const trainRMSE  = rmse(trainPreds, train.y);
 
   applyBins(test, cuts);
-  const testPreds = predict(trees, test, base);
+  const testPreds = predict(ensemble, test);
   const testRMSE  = rmse(testPreds, test.y);
 
   writeln("  RMSE (train): ", trainRMSE);
