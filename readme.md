@@ -1,6 +1,10 @@
 # spire -- gradient boosting machines
 
-claude --resume 943e5316-411f-4ad0-bebb-323fa13bb65c
+    claude --resume 750c1825-187f-47bf-ba62-595de9b3086e       
+
+## refactor -- objectives mature from an enum to separate records
+
+see `refactor.md`.
 
 ## usage/tests
 
@@ -51,6 +55,9 @@ make CHPL_TARGET_CPU=broadwell
 ```
 
 ## next steps
+
+0.1 try california housing data with multi-locale!!
+0.2 quantile regression on bicycle data
 
 1. **Min-split-gain pruning** — add `minGain: real = 0.0` to `BoosterConfig`, check `gain > cfg.minGain` in `findBestSplits`. Single-field change, very low cost.
 2. **Early stopping** — add `valData` and `earlyStoppingRounds` to `BoosterConfig`; track best validation loss in `boost` and halt early.
