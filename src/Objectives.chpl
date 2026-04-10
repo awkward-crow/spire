@@ -25,6 +25,7 @@ module Objectives {
   use Math;
   use DataLayout;
   use Sort;
+  use Tree;
 
   // ------------------------------------------------------------------
   // Helpers
@@ -66,6 +67,9 @@ module Objectives {
     }
     proc loss(F: [] real, y: [] real): real { return mseLoss(F, y); }
     proc defaultMinHess(): real             { return 1.0; }
+    // Newton step is the exact minimiser for MSE — no refit needed.
+    proc leafRefit(ref tree: FittedTree, nodeId: [] int,
+                   F: [] real, y: [] real, eta: real) { }
   }
 
   // ------------------------------------------------------------------
@@ -93,6 +97,9 @@ module Objectives {
     }
     proc loss(F: [] real, y: [] real): real { return logLoss(F, y); }
     proc defaultMinHess(): real             { return 1e-6; }
+    // Newton step is well-defined for LogLoss — no refit needed.
+    proc leafRefit(ref tree: FittedTree, nodeId: [] int,
+                   F: [] real, y: [] real, eta: real) { }
   }
 
   // ------------------------------------------------------------------
@@ -148,6 +155,57 @@ module Objectives {
     // with the new hessian scale.  Returning 1.0 would require ~1/(tau*(1-tau))
     // samples minimum, which over-prunes for extreme tau values.
     proc defaultMinHess(): real             { return tau * (1.0 - tau); }
+
+    // Post-hoc leaf refit: replace the Newton-step leaf value with the
+    // tau-quantile of residuals (y_i - F_i) in the leaf.
+    //
+    // This is LightGBM's RenewTreeOutput() approach.  The Newton step is
+    // bounded by O(1/(1-tau)) regardless of residual magnitude; the quantile
+    // of actual residuals can be orders of magnitude larger, enabling
+    // convergence in far fewer trees.
+    //
+    // nodeId[i] contains the leaf heap index for sample i — valid after
+    // finalizeLeaves, before applyTree is called.
+    proc leafRefit(ref tree: FittedTree, nodeId: [] int,
+                   F: [] real, y: [] real, eta: real) {
+      if tau <= 0.0 || tau >= 1.0 then
+        halt("Pinball tau must be in (0, 1), got: " + tau:string);
+
+      const nSamples = nodeId.domain.size;
+
+      // Gather distributed nodeId and residuals to locale 0.
+      // Follows the same pattern as Pinball.initF.
+      var localNodeId  : [0..#nSamples] int;
+      var localResidual: [0..#nSamples] real;
+      forall i in nodeId.domain {
+        localNodeId[i]   = nodeId[i];
+        localResidual[i] = y[i] - F[i];
+      }
+
+      // Scratch buffer — reused across leaves; sized to worst case (all
+      // samples in one leaf).
+      var leafBuf: [0..#nSamples] real;
+
+      for nodeIdx in tree.nodeDom {
+        if !tree.isLeaf[nodeIdx] then continue;
+
+        // Collect residuals for this leaf in a single pass.
+        var cnt = 0;
+        for i in 0..#nSamples {
+          if localNodeId[i] == nodeIdx {
+            leafBuf[cnt] = localResidual[i];
+            cnt += 1;
+          }
+        }
+        if cnt == 0 then continue;   // phantom leaf — keep value = 0
+
+        // Sort the slice and take the tau-quantile.
+        var residuals: [0..#cnt] real = leafBuf[0..#cnt];
+        sort(residuals);
+        const qIdx = min((tau * cnt: real): int, cnt - 1);
+        tree.value[nodeIdx] = eta * residuals[qIdx];
+      }
+    }
   }
 
   // ------------------------------------------------------------------

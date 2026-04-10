@@ -139,6 +139,10 @@ module Booster {
           updateNodeAssign(data, splits, nodeId);
         } else {
           finalizeLeaves(trees[t], hist, d, cfg.lambda, cfg.eta);
+          // Post-hoc leaf refit: for quantile objectives, replace Newton-step
+          // leaf values with the tau-quantile of per-leaf residuals.
+          // No-op for MSE and LogLoss.
+          obj.leafRefit(trees[t], nodeId, data.F, data.y, cfg.eta);
           const nLeaves = + reduce trees[t].isLeaf: int;
           logInfo("tree=" + t:string + " leaves=" + nLeaves:string);
         }
