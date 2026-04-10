@@ -124,6 +124,13 @@ module Objectives {
                    ref g: [] real, ref h: [] real) {
       if tau <= 0.0 || tau >= 1.0 then
         halt("Pinball tau must be in (0, 1), got: " + tau:string);
+      // Hessian = tau*(1-tau): Fisher information of the asymmetric Laplace
+      // distribution.  Using 1.0 (the piecewise-linear true hessian
+      // approximation) bounds leaf values to O(tau), giving steps of
+      // eta*tau ≈ 0.01 for tau=0.1 — far too small for real-valued targets.
+      // tau*(1-tau) scales leaf values to O(1) regardless of tau, matching
+      // the convergence rate of MSE.
+      const hessVal = tau * (1.0 - tau);
       forall i in F.domain {
         const residual = y[i] - F[i];
         if residual > 0.0 then
@@ -132,12 +139,15 @@ module Objectives {
           g[i] = 1.0 - tau;
         else
           g[i] = 0.0;
-        h[i] = 1.0;
+        h[i] = hessVal;
       }
     }
 
     proc loss(F: [] real, y: [] real): real { return pinballLoss(F, y, tau); }
-    proc defaultMinHess(): real             { return 1.0; }
+    // minHess = tau*(1-tau) keeps the 1-sample-per-leaf threshold consistent
+    // with the new hessian scale.  Returning 1.0 would require ~1/(tau*(1-tau))
+    // samples minimum, which over-prunes for extreme tau values.
+    proc defaultMinHess(): real             { return tau * (1.0 - tau); }
   }
 
   // ------------------------------------------------------------------

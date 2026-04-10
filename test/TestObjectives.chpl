@@ -118,9 +118,9 @@ proc testPinball() {
   assertClose("Pinball grad[1] (over)",  grad[1],  0.1);   // F=1.5 > y=1.0
   assertClose("Pinball grad[2] (exact)", grad[2],  0.0);   // F=1.0 == y=1.0
 
-  // hessians are all 1.0 for pinball
+  // hessians are tau*(1-tau) for pinball
   for i in 0..#n do
-    assertClose("Pinball hess[" + i:string + "]", hess[i], 1.0);
+    assertClose("Pinball hess[" + i:string + "]", hess[i], tau * (1.0 - tau));
 
   // Test tau = 0.5 (median regression — symmetric)
   writeln("\n  tau=0.5 (median):");

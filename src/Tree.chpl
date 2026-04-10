@@ -164,7 +164,10 @@ module Tree {
   // ------------------------------------------------------------------
   // applyTree
   //
-  // F[i] += eta * (leaf value for sample i under tree).
+  // F[i] += tree.value[leaf] for each sample.
+  //
+  // eta is already baked into tree.value at recordLevel/finalizeLeaves
+  // time; it is NOT applied again here.
   //
   // Tree arrays are fetched to each locale once before the forall to
   // avoid per-sample remote GETs while walking the tree.
