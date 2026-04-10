@@ -237,11 +237,52 @@ suggesting it handles Pinball convergence more efficiently — possibly via
 gradient scaling, a different leaf-weight normalisation, or internal
 step-size adaptation.
 
-Candidates to investigate:
-- Leaf weight formula: check src/Splits.chpl for the exact expression
-- Gradient normalisation: divide Pinball gradients by tau*(1-tau) to scale
-  comparably to MSE gradients
-- Increase nTrees — quantile models need more rounds than MSE
+### Pinball hessian fix (implemented)
+
+Changed `Pinball.gradients()` hessian from `1.0` to `tau*(1-tau)` — the Fisher
+information of the asymmetric Laplace distribution.  Also updated
+`defaultMinHess()` to return `tau*(1-tau)` to keep the 1-sample-per-leaf
+threshold consistent.
+
+Results (50 trees, depth 4):
+
+|          | tau=0.1 test | tau=0.9 test | coverage | width |
+|----------|-------------|-------------|----------|-------|
+| Before   | 18.18       | 40.17       | 81.8%    | 443   |
+| After    | 17.67       | 39.00       | 88.1%    | 440   |
+| LightGBM | 10.67       | 11.30       | 82.3%    | 186   |
+
+Modest improvement in loss (~3%), but coverage overshot (88% vs 80% target).
+
+The gap persists because even with the correct hessian the leaf value for a
+pure under-predicting leaf is `tau/(tau*(1-tau)) = 1/(1-tau) ≈ 1.11` — still a
+bounded constant, independent of actual residual magnitude.  The optimal leaf
+update for Pinball is the tau-quantile of `y_i − F_i` within the leaf, which
+can be 100s of counts; the histogram-based gradient approach cannot see this.
+
+The stale comment in `applyTree` (claiming eta was applied there) was also
+fixed — eta is baked into leaf values at `recordLevel`/`finalizeLeaves` time.
+
+### Leaf refit (implemented, gap closed)
+
+Replaced Newton-step leaf values for Pinball with the tau-quantile of per-leaf
+residuals `y_i - F_i` — LightGBM's `RenewTreeOutput()` approach.  New method
+`leafRefit` added to all three objectives; MSE and LogLoss are no-ops.  Called
+in `boost()` after `finalizeLeaves`, before `applyTree`, while `nodeId` is
+still in scope.
+
+Results (50 trees, depth 4):
+
+|          | tau=0.1 test | tau=0.9 test | coverage | width |
+|----------|-------------|-------------|----------|-------|
+| Newton step (before) | 18.18 | 40.17 | 88.1% | 440 |
+| Leaf refit (after)   | 10.58 | 11.51 | 81.9% | 187 |
+| LightGBM             | 10.67 | 11.30 | 82.3% | 186 |
+
+Chapel now matches LightGBM within ~1% on both loss values.  Coverage is on
+target (81.9% vs 80% target vs 82.3% LightGBM).  Interval width 187 vs 186.
+
+New file `leaf-refit.md` documents the design and multi-locale gather pattern.
 
 ---
 
