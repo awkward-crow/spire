@@ -61,6 +61,32 @@ module Booster {
   }
 
   // ------------------------------------------------------------------
+  // subtractSiblings
+  //
+  // For each split node at depth-1, derives the right child's histogram
+  // as  hist[parent] − hist[left].  Skips unsplit/phantom parents so
+  // their right-child slots remain zero.
+  //
+  // Called after buildHistogramsLeft; together they implement the
+  // histogram subtraction trick: only left children are built from
+  // scratch, halving the sample-pass work at every depth after depth 0.
+  // ------------------------------------------------------------------
+  private proc subtractSiblings(
+      ref hist  : HistogramData,
+      splits    : [] SplitInfo,
+      depth     : int
+  ) {
+    for n in 0..#(1 << (depth - 1)) {
+      const parent = (1 << (depth - 1)) - 1 + n;   // heapIdx(depth-1, n)
+      if !splits[parent].valid then continue;
+      const left  = 2 * parent + 1;
+      const right = 2 * parent + 2;
+      hist.grad[right, .., ..] = hist.grad[parent, .., ..] - hist.grad[left, .., ..];
+      hist.hess[right, .., ..] = hist.hess[parent, .., ..] - hist.hess[left, .., ..];
+    }
+  }
+
+  // ------------------------------------------------------------------
   // logSplits — trace-level logging of split decisions at one depth.
   // ------------------------------------------------------------------
   private proc logSplits(t: int, d: int, splits: [] SplitInfo) {
@@ -124,20 +150,31 @@ module Booster {
       // Step 2: level-wise tree building
       //
       // Histogram is sized to tree.nNodes so a single allocation
-      // covers all depths.  At each depth only the active nodes
-      // (those reachable from the root) have non-zero histogram
-      // entries; phantom nodes return valid=false from findBestSplits.
+      // covers all depths.  At depth 0 the histogram is built from
+      // scratch.  At depth d > 0 the histogram subtraction trick is
+      // used: buildHistogramsLeft accumulates only into left children
+      // (odd heap index); subtractSiblings derives each right child as
+      //   hist[right] = hist[parent] − hist[left]
+      // halving the sample-pass work at every depth after the root.
+      //
+      // splits is declared outside the loop so it persists as the
+      // "previous-depth splits" needed by subtractSiblings.
       // ----------------------------------------------------------
       var nodeId : [data.rowDom] int = 0;
       var hist    = new HistogramData(maxNodes = trees[t].nNodes,
                                       nFeatures = data.numFeatures);
+      var splits  : [0..#trees[t].nNodes] SplitInfo;
 
       for d in 0..cfg.maxDepth {
-        buildHistograms(data, nodeId, hist);
+        if d == 0 {
+          buildHistograms(data, nodeId, hist);
+        } else {
+          buildHistogramsLeft(data, nodeId, hist, d);
+          subtractSiblings(hist, splits, d);
+        }
 
         if d < cfg.maxDepth {
-          const splits = findBestSplits(hist, cfg.lambda,
-                                        obj.defaultMinHess());
+          splits = findBestSplits(hist, cfg.lambda, obj.defaultMinHess());
           logSplits(t, d, splits);
           recordLevel(trees[t], splits, hist, d, cfg.lambda, cfg.eta);
           updateNodeAssign(data, splits, nodeId);

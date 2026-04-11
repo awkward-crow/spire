@@ -22,14 +22,46 @@ And see `refactor.md`, objectives mature from an enum to separate records.
 
 ## next steps
 
-0.1 try california housing data with multi-locale! and other examples!!
+Ordered by performance impact. And try examples with multi-locale!
 
-1. **Min-split-gain pruning** — add `minGain: real = 0.0` to `BoosterConfig`, check `gain > cfg.minGain` in `findBestSplits`. Single-field change, very low cost.
-2. **Early stopping** — add `valData` and `earlyStoppingRounds` to `BoosterConfig`; track best validation loss in `boost` and halt early.
-3. **Row/column subsampling** — both LightGBM and XGBoost default to subsampling; omitting it widens the accuracy gap on noisy datasets.
-4. **Histogram memory layout benchmark** — `[node, feature, bin]` vs `[feature, bin, node]`.
-5. **Leaf-wise growth** — larger change; batched leaf-wise is the Chapel-native angle.
-6. **Missing value handling** — needed for most real-world datasets beyond California Housing.
+1. **Histogram subtraction trick** — implemented in `buildHistogramsLeft` +
+   `subtractSiblings` but currently slower on the existing examples (CaliforniaHousing
+   1.21 s vs 0.66 s, Bicycle 0.81 s vs 0.57 s).  After the feature-parallel rewrite
+   each sample pass is so cheap that the extra conditional, per-feature zeroing, and
+   sibling-subtraction arithmetic costs more than it saves.  The trick is designed for
+   the regime where sample passes are expensive — large datasets or many features.
+   The crossover point is above ~20 k samples × 12 features; leave it in and revisit
+   when larger data is available.  Candidate datasets (all public):
+   - **Cover Type** — 581 k × 54, binary classification; `sklearn.datasets.fetch_covtype()`
+   - **Year Prediction MSD** — 515 k × 90, regression; UCI ML Repository
+   - **HIGGS** — 11 M × 28, binary classification; standard GBM stress test
+   - **SUSY** — 5 M × 18, binary classification; UCI ML Repository
+
+2. **Histogram memory layout benchmark** — `[node, feature, bin]` vs
+   `[feature, bin, node]`.  More pressing now: the access pattern changed with the
+   feature-parallel rewrite (scatter over varying `nodeId` for a fixed `f`); the
+   better layout is non-obvious and worth measuring.
+
+3. **Column subsampling** — sample a fraction of features per tree.  Directly
+   reduces the `forall f` work proportionally; also the main regularisation knob
+   on wide datasets.
+
+4. **Row subsampling** — sample a fraction of rows per tree.  Reduces the inner
+   `for i in data.rowDom` loop proportionally; aids generalisation.
+
+5. **Leaf-wise growth** — split only the highest-gain leaf each round instead of
+   the whole depth level.  Fewer total histogram builds for the same number of
+   leaves; changes scaling behaviour.  Larger implementation effort.
+
+6. **Early stopping** — halt training when validation loss stops improving.
+   Training-cost feature; no impact on per-tree speed.
+
+7. **Min-split-gain pruning** — add `minGain: real = 0.0` to `BoosterConfig`.
+   `findBestSplits` is already fast; this is a regularisation knob, not a
+   performance win.
+
+8. **Missing value handling** — needed for most real-world datasets beyond the
+   three examples here.
 
 ## usage/tests
 

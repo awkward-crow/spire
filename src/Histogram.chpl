@@ -8,15 +8,15 @@
   vs [feature, bin, node] — benchmark deferred).
 
   Key operations:
-    buildHistograms    — accumulate grad/hess over all samples in active nodes
-    subtractHistograms — derive larger child hist as parent minus smaller child
+    buildHistograms     — full rebuild: accumulate over all samples (depth 0)
+    buildHistogramsLeft — partial rebuild: accumulate only into left children;
+                          right children are derived by subtractSiblings in
+                          Booster.chpl (histogram subtraction trick)
+    subtractHistograms  — derive larger child hist as parent minus smaller child
+                          (low-level helper; also used directly in tests)
 
-  Implicit master-worker pattern:
-    buildHistograms runs a distributed forall (all locales contribute) with
-    + reduce intent so each task accumulates locally before merging back to
-    locale 0.  The resulting HistogramData lives on locale 0.
-    subtractHistograms is pure local arithmetic and should be called on
-    locale 0.
+  buildHistograms parallelises over features: each task owns a disjoint
+  [*, f, *] slice so no reduce copies are needed.
 */
 
 module Histogram {
@@ -78,11 +78,58 @@ module Histogram {
   }
 
   // ------------------------------------------------------------------
+  // buildHistogramsLeft
+  //
+  // Histogram subtraction trick: only accumulate into left children
+  // (odd heap index) at this depth.  Parallel over features, same as
+  // buildHistograms.
+  //
+  // Only the left-child slots for this depth are zeroed; parent slots
+  // from the previous depth are left intact so that Booster.chpl can
+  // derive right children as  parent − left  via subtractSiblings.
+  //
+  // depth >= 1.  Left children at depth d have heap indices
+  //   (2^d − 1), (2^d + 1), (2^d + 3), ...   (odd numbers in level d).
+  // ------------------------------------------------------------------
+  proc buildHistogramsLeft(
+      data    : GBMData,
+      nodeId  : [] int,
+      ref hist: HistogramData,
+      depth   : int
+  ) {
+    const nF        = data.numFeatures;
+    const firstLeft = (1 << depth) - 1;    // heapIdx(depth, 0) — first left child
+    const nLeft     = 1 << (depth - 1);    // 2^(depth-1) left children at this depth
+
+    forall f in 0..#nF with (ref hist) {
+      // Zero only the left-child slots for this feature.
+      for ln in 0..#nLeft {
+        const left = firstLeft + 2 * ln;
+        hist.grad[left, f, ..] = 0.0;
+        hist.hess[left, f, ..] = 0.0;
+      }
+      // Accumulate samples in left children at this depth.
+      // Both conditions are required:
+      //   node & 1 == 1    — left children have odd heap indices
+      //   node >= firstLeft — exclude samples retained at shallower
+      //                       leaf nodes (their nodeId < firstLeft)
+      for i in data.rowDom {
+        const node = nodeId[i];
+        if node & 1 == 1 && node >= firstLeft {
+          const b = data.Xb[i, f]: int;
+          hist.grad[node, f, b] += data.grad[i];
+          hist.hess[node, f, b] += data.hess[i];
+        }
+      }
+    }
+  }
+
+  // ------------------------------------------------------------------
   // subtractHistograms
   //
   // Derives the larger child's histogram as parent - smallerChild.
-  // Called once per split to avoid rebuilding the larger child from
-  // scratch.  Run on locale 0 — pure local arithmetic.
+  // Low-level helper used in tests; see subtractSiblings in Booster.chpl
+  // for the in-loop version that operates on node indices.
   // ------------------------------------------------------------------
   proc subtractHistograms(
       parent     : HistogramData,
