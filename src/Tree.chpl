@@ -123,11 +123,11 @@ module Tree {
         const H = + reduce hist.hess[idx, 0, ..];
         tree.isLeaf[idx] = true;
         tree.value[idx]  = eta * leafValue(G, H, lambda);
-        logTrace("early leaf node=" + idx:string
-               + " depth="         + depth:string
-               + " G="             + G:string
-               + " H="             + H:string
-               + " value="         + tree.value[idx]:string);
+        logTrace("recordLevel: early leaf node=" + idx:string
+               + " depth="                      + depth:string
+               + " G="                          + G:string
+               + " H="                          + H:string
+               + " value="                      + tree.value[idx]:string);
       }
     }
   }
@@ -153,10 +153,10 @@ module Tree {
         const H = + reduce hist.hess[idx, 0, ..];
         tree.isLeaf[idx] = true;
         tree.value[idx]  = eta * leafValue(G, H, lambda);
-        logTrace("leaf node=" + idx:string
-               + " G="       + G:string
-               + " H="       + H:string
-               + " value="   + tree.value[idx]:string);
+        logTrace("finalizeLeaves: leaf node=" + idx:string
+               + " G="                       + G:string
+               + " H="                       + H:string
+               + " value="                   + tree.value[idx]:string);
       }
     }
   }

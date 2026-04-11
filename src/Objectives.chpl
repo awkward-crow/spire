@@ -80,6 +80,11 @@ module Objectives {
   //   Hessian  : p * (1 - p)
   // ------------------------------------------------------------------
   record LogLoss {
+    // Minimum hessian sum for a valid leaf.  p*(1-p) can be tiny when the
+    // model is confident, so the default is much smaller than MSE's 1.0.
+    // Override at construction time: new LogLoss(minHess=0.25).
+    var minHess: real = 1e-6;
+
     proc initF(ref data: GBMData): real {
       const pMean = (+ reduce data.y) / data.numSamples: real;
       const p     = max(1e-7, min(1.0 - 1e-7, pMean));
@@ -96,7 +101,7 @@ module Objectives {
       }
     }
     proc loss(F: [] real, y: [] real): real { return logLoss(F, y); }
-    proc defaultMinHess(): real             { return 1e-6; }
+    proc defaultMinHess(): real             { return minHess; }
     // Newton step is well-defined for LogLoss — no refit needed.
     proc leafRefit(ref tree: FittedTree, nodeId: [] int,
                    F: [] real, y: [] real, eta: real) { }

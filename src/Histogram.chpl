@@ -62,20 +62,19 @@ module Histogram {
   ) {
     const nF = data.numFeatures;
 
-    var accumGrad: [hist.histDom] real;
-    var accumHess: [hist.histDom] real;
+    hist.grad = 0.0;
+    hist.hess = 0.0;
 
-    forall i in data.rowDom with (+ reduce accumGrad, + reduce accumHess) {
-      const node = nodeId[i];
-      for f in 0..#nF {
-        const b = data.Xb[i, f]: int;
-        accumGrad[node, f, b] += data.grad[i];
-        accumHess[node, f, b] += data.hess[i];
+    // Parallel over features: each task owns a disjoint [*, f, *] slice of
+    // hist, so no data races and no per-task reduce copies are needed.
+    forall f in 0..#nF with (ref hist) {
+      for i in data.rowDom {
+        const node = nodeId[i];
+        const b    = data.Xb[i, f]: int;
+        hist.grad[node, f, b] += data.grad[i];
+        hist.hess[node, f, b] += data.hess[i];
       }
     }
-
-    hist.grad = accumGrad;
-    hist.hess = accumHess;
   }
 
   // ------------------------------------------------------------------

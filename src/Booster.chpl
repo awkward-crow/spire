@@ -33,6 +33,7 @@ module Booster {
   use Splits;
   use Tree;
   use Logger;
+  use Time;
 
   // ------------------------------------------------------------------
   // GBMEnsemble — the complete fitted model
@@ -68,13 +69,13 @@ module Booster {
       const idx = heapIdx(d, n);
       const s   = splits[idx];
       if s.valid then
-        logTrace("tree="     + t:string
-               + " depth="   + d:string
-               + " node="    + idx:string
-               + " feature=" + s.feature:string
-               + " bin="     + s.bin:string
-               + " gain="    + s.gain:string
-               + " leftH="   + s.leftHess:string);
+        logTrace("boost: tree="   + t:string
+               + " depth="       + d:string
+               + " node="        + idx:string
+               + " feature="     + s.feature:string
+               + " bin="         + s.bin:string
+               + " gain="        + s.gain:string
+               + " leftH="       + s.leftHess:string);
     }
   }
 
@@ -107,6 +108,9 @@ module Booster {
     const baseScore = obj.initF(data);
 
     var trees: [0..#cfg.nTrees] FittedTree;
+
+    var boostTimer: stopwatch;
+    boostTimer.start();
 
     for t in 0..#cfg.nTrees {
       trees[t] = new FittedTree(cfg.maxDepth);
@@ -144,7 +148,8 @@ module Booster {
           // No-op for MSE and LogLoss.
           obj.leafRefit(trees[t], nodeId, data.F, data.y, cfg.eta);
           const nLeaves = + reduce trees[t].isLeaf: int;
-          logInfo("tree=" + t:string + " leaves=" + nLeaves:string);
+          logInfo("boost: tree=" + t:string + " leaves=" + nLeaves:string
+                + " trainLoss=" + obj.loss(data.F, data.y):string);
         }
       }
 
@@ -152,9 +157,13 @@ module Booster {
       // Step 3: update predictions
       // ----------------------------------------------------------
       applyTree(data, trees[t], data.F);
-      logInfo("tree=" + t:string
-            + " trainLoss=" + obj.loss(data.F, data.y):string);
     }
+
+    boostTimer.stop();
+    logInfo("boost: elapsed=" + boostTimer.elapsed():string + "s"
+          + " trees=" + cfg.nTrees:string
+          + " samples=" + data.numSamples:string
+          + " features=" + data.numFeatures:string);
 
     return new GBMEnsemble(trees=trees, baseScore=baseScore);
   }

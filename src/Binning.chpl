@@ -29,6 +29,7 @@ module Binning {
   use Math;
   use Logger;
   use TDigest;
+  use Time;
 
   param MAX_BINS = 255;   // bins per feature; uint(8) covers 0..254
 
@@ -58,6 +59,9 @@ module Binning {
   // Call once before training begins.
   // ------------------------------------------------------------------
   proc computeBins(ref data: GBMData): BinCuts {
+    var t: stopwatch;
+    t.start();
+
     const nF         = data.numFeatures;
     const nCuts      = MAX_BINS - 1;       // 254 cut-points → 255 bins
     const compression = 500.0;             // k1 max centroids ≈ 250 > 254? —
@@ -124,9 +128,9 @@ module Binning {
         mergeAndCompress(totalBuf, nTotal, totalW, compression,
                          merged, mergedN);
 
-        logInfo("binning: feature=" + f:string
-              + " centroids=" + mergedN:string
-              + " totalW=" + totalW:string);
+        logTrace("binning: feature=" + f:string
+               + " centroids=" + mergedN:string
+               + " totalW=" + totalW:string);
 
         for b in 0..#nCuts {
           const q  = (b + 1): real / MAX_BINS: real;
@@ -148,7 +152,9 @@ module Binning {
       }
     }
 
-    logInfo("binning: t-digest compression=" + compression:string
+    t.stop();
+    logInfo("binning: elapsed=" + t.elapsed():string + "s"
+          + " compression=" + compression:string
           + " locales=" + numLocales:string
           + " cuts/feature=" + nCuts:string);
 
