@@ -15,7 +15,7 @@ BUILD     = build
 
 export CHPL_TARGET_CPU ?= native
 
-PROGRAMS = CaliforniaHousing Bicycle BreastCancer
+PROGRAMS = CaliforniaHousing Bicycle BreastCancer CoverType
 
 $(BUILD):
 	mkdir -p $(BUILD)
