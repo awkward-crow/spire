@@ -123,6 +123,20 @@ Benchmark before optimising.
 
 ## Next Steps
 
+### Standard benchmark datasets
+
+| Dataset | Task | Samples | Features | Notes |
+|---------|------|---------|----------|-------|
+| California Housing | Regression (MSE) | 20,640 | 8 numeric | ✓ implemented |
+| Bicycle (UCI hour) | Quantile regression (Pinball) | 17,379 | 12 numeric | ✓ implemented |
+| Adult (Census Income) | Binary classification (LogLoss) | ~49k | 8 numeric + 6 categorical | Used in XGBoost and LightGBM papers; categorical needs encoding |
+| HIGGS | Binary classification (LogLoss) | 11M (98k "small" on OpenML) | 28 numeric | XGBoost paper benchmark; drop-in, no categorical encoding |
+| Covertype | Binary classification (LogLoss) | 581k | 10 numeric + 44 binary | Available directly from sklearn; usually binarised (class 1 vs rest) |
+
+Adult is the most cited real-world GBM classification benchmark.  HIGGS is
+the cleanest (pure numeric, no encoding) and largest at practical scale.
+Covertype is a middle ground available without OpenML.
+
 ### Phase 3 — Comparison against LightGBM / XGBoost
 
 Critical path to a benchmark on a standard dataset (e.g. California Housing,

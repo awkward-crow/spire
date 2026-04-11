@@ -1,22 +1,28 @@
 # spire -- gradient boosting machines
 
-    claude --resume 750c1825-187f-47bf-ba62-595de9b3086e       
+    claude --resume 750c1825-187f-47bf-ba62-595de9b3086e
+
+    just say "performance profiling"
 
 ## latest
+
+ - much improved performance, see section below
+
+---
 
  - quantile regression on bicycle data
   = Records (MSE, LogLoss, Pinball) replacing the enum Objective + dispatch chains
   = GBMEnsemble bundling trees + baseScore
   = BoosterConfig stripped of tau and minHess
   = boost() generic via duck typing, predict() taking GBMEnsemble
-  = t =digest binning replacing random sampling                                                            = Pinball hessian fixed to tau*(1 =tau)
+  = t-digest binning replacing random sampling
+  = Pinball hessian fixed to tau*(1-tau)
 
 And see `refactor.md`, objectives mature from an enum to separate records.
 
 ## next steps
 
-0.1 try california housing data with multi-locale!!
-0.2 logloss example
+0.1 try california housing data with multi-locale! and other examples!!
 
 1. **Min-split-gain pruning** — add `minGain: real = 0.0` to `BoosterConfig`, check `gain > cfg.minGain` in `findBestSplits`. Single-field change, very low cost.
 2. **Early stopping** — add `valData` and `earlyStoppingRounds` to `BoosterConfig`; track best validation loss in `boost` and halt early.
@@ -71,6 +77,33 @@ override this:
 ```sh
 make CHPL_TARGET_CPU=broadwell
 ```
+
+## performance
+
+### tldr; `--fast` default + histogram parallelism rewrite
+
+### --fast
+
+`examples/Makefile` now compiles with `--fast` by default (removes Chapel's
+nil/bounds/overflow checks).  Use `DEBUG=1` to restore checks, `PROFILE=1`
+for a `--fast -g` profiling build.
+
+### build histograms
+
+`buildHistograms` was re-parallelised over features instead of samples.  The
+old `forall i in samples with (+ reduce accumGrad, + reduce accumHess)` pattern
+allocated per-task copies of the full `[nodes × features × bins]` histogram
+(~2 MB each) on every call — ~22 GB of allocations over a 100-tree run.  The
+new loop is `forall f in 0..#nF with (ref hist)`: each task owns a disjoint
+`[*, f, *]` slice, so no copies and no reduce are needed.
+
+| Example | Before | After | Speedup |
+|---------|--------|-------|---------|
+| CaliforniaHousing (16 k samples, depth 6) | 38.8 s | 0.66 s | 59× |
+| Bicycle (14 k samples, depth 4, 2 quantiles) | 8.7 s | 0.57 s | 15× |
+| BreastCancer (455 samples, depth 4) | 9.8 s | 0.11 s | 89× |
+
+All outputs are numerically identical; 119/119 tests pass.
 
 ## see also
 
