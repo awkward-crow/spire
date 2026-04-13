@@ -156,4 +156,34 @@ Chapel marginally outperforms LightGBM on both metrics at these settings
 (nTrees=50, maxDepth=4, eta=0.1, lambda=1.0).  Wall time ~31 s on a single
 locale (8 cores); 9 s of that is CSV loading.
 
+## SUSY
+
+Binary classification on the UCI SUSY dataset — distinguishing supersymmetric
+signal from background using kinematic features from a particle detector.
+5 000 000 samples, 18 features (8 low-level kinematic + 10 derived).
+Objective: LogLoss.
+
+### download data
+
+```sh
+mkdir -p data
+python -u save_susy.py
+```
+
+The `-u` flag disables Python's output buffering so progress lines appear
+immediately. Without it the script is silent until the download finishes.
+
+### lightGBM benchmark
+
+```sh
+python lightgbm_susy.py
+```
+
+### chapel gbm
+
+```sh
+make SUSY
+./build/SUSY
+```
+
 ### end
