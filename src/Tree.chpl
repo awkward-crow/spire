@@ -119,8 +119,8 @@ module Tree {
         tree.splitBin[idx] = splits[idx].bin;
         tree.isLeaf[idx]   = false;
       } else {
-        const G = + reduce hist.grad[idx, 0, ..];
-        const H = + reduce hist.hess[idx, 0, ..];
+        const G = + reduce hist.grad[0, .., idx];
+        const H = + reduce hist.hess[0, .., idx];
         tree.isLeaf[idx] = true;
         tree.value[idx]  = eta * leafValue(G, H, lambda);
         logTrace("recordLevel: early leaf node=" + idx:string
@@ -149,8 +149,8 @@ module Tree {
     for n in 0..#(1 << depth) {
       const idx = heapIdx(depth, n);
       if !tree.isLeaf[idx] {
-        const G = + reduce hist.grad[idx, 0, ..];
-        const H = + reduce hist.hess[idx, 0, ..];
+        const G = + reduce hist.grad[0, .., idx];
+        const H = + reduce hist.hess[0, .., idx];
         tree.isLeaf[idx] = true;
         tree.value[idx]  = eta * leafValue(G, H, lambda);
         logTrace("finalizeLeaves: leaf node=" + idx:string

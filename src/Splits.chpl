@@ -64,8 +64,8 @@ module Splits {
 
       // Node totals — sum over bins for feature 0
       // (all features give the same total by conservation invariant)
-      const G_P = + reduce hist.grad[node, 0, ..];
-      const H_P = + reduce hist.hess[node, 0, ..];
+      const G_P = + reduce hist.grad[0, .., node];
+      const H_P = + reduce hist.hess[0, .., node];
 
       if H_P < minHess {
         splits[node].valid = false;
@@ -80,8 +80,8 @@ module Splits {
         var H_L = 0.0;
 
         for b in 0..<MAX_BINS {
-          G_L += hist.grad[node, f, b];
-          H_L += hist.hess[node, f, b];
+          G_L += hist.grad[f, b, node];
+          H_L += hist.hess[f, b, node];
 
           const G_R = G_P - G_L;
           const H_R = H_P - H_L;

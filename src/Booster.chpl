@@ -51,6 +51,15 @@ module Booster {
   }
 
   // ------------------------------------------------------------------
+  // useHistogramSubtraction
+  //
+  // When true, buildHistogramsLeft + subtractSiblings is used at depth > 0
+  // instead of a full rebuild.  Faster for large datasets; slower for small
+  // ones due to extra overhead.  Override at runtime: --useHistogramSubtraction=false
+  // ------------------------------------------------------------------
+  config const useHistogramSubtraction: bool = false;
+
+  // ------------------------------------------------------------------
   // BoosterConfig
   // ------------------------------------------------------------------
   record BoosterConfig {
@@ -81,8 +90,8 @@ module Booster {
       if !splits[parent].valid then continue;
       const left  = 2 * parent + 1;
       const right = 2 * parent + 2;
-      hist.grad[right, .., ..] = hist.grad[parent, .., ..] - hist.grad[left, .., ..];
-      hist.hess[right, .., ..] = hist.hess[parent, .., ..] - hist.hess[left, .., ..];
+      hist.grad[.., .., right] = hist.grad[.., .., parent] - hist.grad[.., .., left];
+      hist.hess[.., .., right] = hist.hess[.., .., parent] - hist.hess[.., .., left];
     }
   }
 
@@ -166,7 +175,7 @@ module Booster {
       var splits  : [0..#trees[t].nNodes] SplitInfo;
 
       for d in 0..cfg.maxDepth {
-        if d == 0 {
+        if !useHistogramSubtraction || d == 0 {
           buildHistograms(data, nodeId, hist);
         } else {
           buildHistogramsLeft(data, nodeId, hist, d);

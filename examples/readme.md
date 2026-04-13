@@ -100,4 +100,60 @@ mkdir -p data
       RMSE (test):  0.537284
 
 
+## Cover Type
+
+Binary classification on the UCI Cover Type dataset — predicting forest cover type
+from cartographic variables. Class 1 (Spruce/Fir) vs class 2 (Lodgepole Pine),
+~495 k rows, 54 features (10 quantitative + 44 binary wilderness-area/soil-type
+indicators). Objective: LogLoss.
+
+### download data
+
+```sh
+mkdir -p data
+python save_cover_type.py
+```
+=>
+    Saved 495141 rows x 54 features to data/cover_type.csv (shuffled, seed=10331)
+    Label distribution: 211840 Spruce/Fir (1), 283301 Lodgepole Pine (0)
+
+### lightGBM benchmark
+
+```sh
+python lightgbm_cover_type.py
+```
+=>
+    === Cover Type Classification — LightGBM ===
+    Samples: 495141  Features: 54
+    Train: 396112  Test: 99029
+
+    Log-loss:
+      train: 0.435960  test: 0.436165
+
+    Accuracy:
+      train: 80.0218%  test: 80.0644%
+
+### chapel gbm
+
+```sh
+make CoverType
+./build/CoverType
+```
+=>
+    === Cover Type Classification — Chapel GBM ===
+    Locales: 1
+
+    Samples: 495141  Features: 54  (load: 9.1s)
+    Train: 396112  Test: 99029
+
+    Log-loss:
+      train: 0.433554  test: 0.433736
+
+    Accuracy:
+      train: 80.1036%  test: 80.0947%
+
+Chapel marginally outperforms LightGBM on both metrics at these settings
+(nTrees=50, maxDepth=4, eta=0.1, lambda=1.0).  Wall time ~31 s on a single
+locale (8 cores); 9 s of that is CSV loading.
+
 ### end

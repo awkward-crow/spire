@@ -56,8 +56,8 @@ proc testConservation() {
   const totalHess = + reduce data.hess;
 
   for f in 0..#data.numFeatures {
-    const binGradSum = + reduce hist.grad[0, f, ..];
-    const binHessSum = + reduce hist.hess[0, f, ..];
+    const binGradSum = + reduce hist.grad[f, .., 0];
+    const binHessSum = + reduce hist.hess[f, .., 0];
     assertClose("grad conservation f=" + f:string, binGradSum, totalGrad);
     assertClose("hess conservation f=" + f:string, binHessSum, totalHess);
   }
@@ -96,8 +96,8 @@ proc testSubtraction() {
 
   // Extract node-1 slice of hist2 as smallChild
   var smallChild = new HistogramData(maxNodes=1, nFeatures=data.numFeatures);
-  smallChild.grad[0, .., ..] = hist2.grad[1, .., ..];
-  smallChild.hess[0, .., ..] = hist2.hess[1, .., ..];
+  smallChild.grad[.., .., 0] = hist2.grad[.., .., 1];
+  smallChild.hess[.., .., 0] = hist2.hess[.., .., 1];
 
   // Derive large child via subtraction
   var large = new HistogramData(maxNodes=1, nFeatures=data.numFeatures);
@@ -107,13 +107,13 @@ proc testSubtraction() {
   var ok = true;
   for f in 0..#data.numFeatures {
     for b in 0..#MAX_BINS {
-      const diff = abs(large.grad[0, f, b] - hist2.grad[0, f, b]);
+      const diff = abs(large.grad[f, b, 0] - hist2.grad[f, b, 0]);
       if diff > EPS {
         writeln("FAIL  subtraction grad f=", f, " b=", b,
                 " diff=", diff);
         ok = false;
       }
-      const diffH = abs(large.hess[0, f, b] - hist2.hess[0, f, b]);
+      const diffH = abs(large.hess[f, b, 0] - hist2.hess[f, b, 0]);
       if diffH > EPS {
         writeln("FAIL  subtraction hess f=", f, " b=", b,
                 " diff=", diffH);

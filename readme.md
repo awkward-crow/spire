@@ -2,14 +2,18 @@
 
     claude --resume 750c1825-187f-47bf-ba62-595de9b3086e
 
-    just say "performance profiling"
+    "cover type" or "resume" ...
+
+1. Run ./build/CoverType --logLevel=INFO to see the binning vs boost time split
+  2. Test whether the histogram subtraction trick now pays off at 396k × 54
+  3. Investigate the 3.3/8 CPU utilization — findBestSplits is the likely serial
+  bottleneck
+
+
 
 ## latest
 
  - much improved performance, see section below
-
----
-
  - quantile regression on bicycle data
   = Records (MSE, LogLoss, Pinball) replacing the enum Objective + dispatch chains
   = GBMEnsemble bundling trees + baseScore
@@ -21,6 +25,8 @@
 And see `refactor.md`, objectives mature from an enum to separate records.
 
 ## next steps
+
+Add note to examples/readme about cover type
 
 Ordered by performance impact. And try examples with multi-locale!
 
@@ -37,31 +43,37 @@ Ordered by performance impact. And try examples with multi-locale!
    - **HIGGS** — 11 M × 28, binary classification; standard GBM stress test
    - **SUSY** — 5 M × 18, binary classification; UCI ML Repository
 
-2. **Histogram memory layout benchmark** — `[node, feature, bin]` vs
-   `[feature, bin, node]`.  More pressing now: the access pattern changed with the
-   feature-parallel rewrite (scatter over varying `nodeId` for a fixed `f`); the
-   better layout is non-obvious and worth measuring.
+2. **Histogram memory layout** — done: `[feature, bin, node]` adopted.  6% faster
+   than `[node, feature, bin]` on CoverType (31.7 s vs 33.7 s); stride-1 node access
+   in the scatter writes is the win.
 
-3. **Column subsampling** — sample a fraction of features per tree.  Directly
+3. **Parallelise `findBestSplits`** — tried `forall node` instead of `for node`;
+   slower at both depth 4 (31 nodes) and depth 6 (127 nodes) on CoverType.  Per-node
+   work (54 features × 255 bins = 13.8 k iterations) is too cheap relative to
+   Qthreads task-creation overhead.  Not worth doing until there are many more nodes
+   (deeper trees or leaf-wise growth with many leaves) or a heavier inner loop
+   (more features/bins).
+
+4. **Column subsampling** — sample a fraction of features per tree.  Directly
    reduces the `forall f` work proportionally; also the main regularisation knob
    on wide datasets.
 
-4. **Row subsampling** — sample a fraction of rows per tree.  Reduces the inner
+5. **Row subsampling** — sample a fraction of rows per tree.  Reduces the inner
    `for i in data.rowDom` loop proportionally; aids generalisation.
 
-5. **Leaf-wise growth** — split only the highest-gain leaf each round instead of
+6. **Leaf-wise growth** — split only the highest-gain leaf each round instead of
    the whole depth level.  Fewer total histogram builds for the same number of
    leaves; changes scaling behaviour.  Larger implementation effort.
 
-6. **Early stopping** — halt training when validation loss stops improving.
+7. **Early stopping** — halt training when validation loss stops improving.
    Training-cost feature; no impact on per-tree speed.
 
-7. **Min-split-gain pruning** — add `minGain: real = 0.0` to `BoosterConfig`.
+8. **Min-split-gain pruning** — add `minGain: real = 0.0` to `BoosterConfig`.
    `findBestSplits` is already fast; this is a regularisation knob, not a
    performance win.
 
-8. **Missing value handling** — needed for most real-world datasets beyond the
-   three examples here.
+9. **Missing value handling** — needed for most real-world datasets beyond the
+   examples here.
 
 ## usage/tests
 

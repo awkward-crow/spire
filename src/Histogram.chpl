@@ -4,8 +4,10 @@
   Histogram accumulation for GBM tree building.
 
   A Histogram holds per-(node, feature, bin) gradient and hessian sums.
-  Memory layout: [node, feature, bin]  (see notes.md for the trade-off
-  vs [feature, bin, node] — benchmark deferred).
+  Memory layout: [feature, bin, node]  — node varies fastest so that the
+  scatter writes in buildHistograms (varying node, fixed feature) are
+  stride-1.  findBestSplits scans bins for a fixed (feature, node), which
+  has stride maxNodes; that is a smaller access volume than the scatter.
 
   Key operations:
     buildHistograms     — full rebuild: accumulate over all samples (depth 0)
@@ -41,7 +43,7 @@ module Histogram {
     proc init(maxNodes: int, nFeatures: int) {
       this.maxNodes  = maxNodes;
       this.nFeatures = nFeatures;
-      this.histDom   = {0..#maxNodes, 0..#nFeatures, 0..#MAX_BINS};
+      this.histDom   = {0..#nFeatures, 0..#MAX_BINS, 0..#maxNodes};
     }
   }
 
@@ -71,8 +73,8 @@ module Histogram {
       for i in data.rowDom {
         const node = nodeId[i];
         const b    = data.Xb[i, f]: int;
-        hist.grad[node, f, b] += data.grad[i];
-        hist.hess[node, f, b] += data.hess[i];
+        hist.grad[f, b, node] += data.grad[i];
+        hist.hess[f, b, node] += data.hess[i];
       }
     }
   }
@@ -105,8 +107,8 @@ module Histogram {
       // Zero only the left-child slots for this feature.
       for ln in 0..#nLeft {
         const left = firstLeft + 2 * ln;
-        hist.grad[left, f, ..] = 0.0;
-        hist.hess[left, f, ..] = 0.0;
+        hist.grad[f, .., left] = 0.0;
+        hist.hess[f, .., left] = 0.0;
       }
       // Accumulate samples in left children at this depth.
       // Both conditions are required:
@@ -117,8 +119,8 @@ module Histogram {
         const node = nodeId[i];
         if node & 1 == 1 && node >= firstLeft {
           const b = data.Xb[i, f]: int;
-          hist.grad[node, f, b] += data.grad[i];
-          hist.hess[node, f, b] += data.hess[i];
+          hist.grad[f, b, node] += data.grad[i];
+          hist.hess[f, b, node] += data.hess[i];
         }
       }
     }
