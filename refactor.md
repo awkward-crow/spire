@@ -293,3 +293,26 @@ for generic parameters in interface methods, and those are not yet supported.
 Resolution: removed the interface declaration and `: GBMObjective` from the three
 records; removed `where T implements GBMObjective` from `boost()`.  The records
 and the generic `boost()` remain — Chapel specialises statically via duck typing.
+
+---
+
+### Leaf-wise tree growth (implemented)
+
+Replaced level-wise (breadth-first) growth with leaf-wise (best-first) growth,
+matching LightGBM's default `num_leaves` strategy.
+
+Key changes:
+- `src/Tree.chpl` — rewritten. `FittedTree` now uses explicit child pointers
+  (`leftChild`, `rightChild`) instead of heap indexing.  Capacity is
+  `2*numLeaves-1` nodes.  `updateNodeAssign` routes samples for a single split
+  node; `applyTree` walks the child-pointer tree per sample.
+- `src/Booster.chpl` — rewritten. `BoosterConfig` drops `maxDepth`, adds
+  `numLeaves` (default 31).  `boost()` inner loop maintains an `activeLeaves`
+  list and `cachedSplits`; each iteration expands the highest-gain active leaf.
+  Histograms are rebuilt from scratch each round (one sample pass per split).
+- `src/Histogram.chpl`, `src/Splits.chpl` — backward-compat overloads added
+  (no-featSubset variants retained).
+- All test files and example drivers updated: `maxDepth` → `numLeaves`
+  (depth=4 → numLeaves=16, depth=6 → numLeaves=64).
+
+Result: CoverType 20 trees / 8 leaves → 78% accuracy.

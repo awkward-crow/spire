@@ -41,7 +41,7 @@ proc testMSEDecreases() {
 
   var data = makeSyntheticRegression(nSamples=500, nFeatures=5);
 
-  var cfg = new BoosterConfig(nTrees=10, maxDepth=2, eta=0.3, lambda=1.0);
+  var cfg = new BoosterConfig(nTrees=10, numLeaves=4, eta=0.3, lambda=1.0);
 
   computeBins(data);
   const lossBefore = mseLoss(data.F, data.y);
@@ -64,7 +64,7 @@ proc testLogLossDecreases() {
 
   var data = makeSyntheticClassification(nSamples=500, nFeatures=5);
 
-  var cfg = new BoosterConfig(nTrees=10, maxDepth=2, eta=0.3, lambda=1.0);
+  var cfg = new BoosterConfig(nTrees=10, numLeaves=4, eta=0.3, lambda=1.0);
 
   computeBins(data);
   const lossBefore = logLoss(data.F, data.y);
@@ -86,7 +86,7 @@ proc testPinballDecreases() {
   var data = makeSyntheticRegression(nSamples=500, nFeatures=5);
 
   const tau = 0.9;
-  var cfg = new BoosterConfig(nTrees=10, maxDepth=2, eta=0.3, lambda=1.0);
+  var cfg = new BoosterConfig(nTrees=10, numLeaves=4, eta=0.3, lambda=1.0);
 
   computeBins(data);
   const lossBefore = pinballLoss(data.F, data.y, tau);

@@ -36,7 +36,7 @@ proc testPredictMatchesF() {
   writeln("\n--- predict on train set matches data.F ---");
 
   var data = makeSyntheticRegression(nSamples=200, nFeatures=4);
-  var cfg  = new BoosterConfig(nTrees=5, maxDepth=2, eta=0.3);
+  var cfg  = new BoosterConfig(nTrees=5, numLeaves=4, eta=0.3);
 
   computeBins(data);
   const ensemble = boost(data, new MSE(), cfg);
@@ -65,7 +65,7 @@ proc testPredictOnTestSet() {
   var train = makeSyntheticRegression(nSamples=400, nFeatures=4, seed=1);
   var test  = makeSyntheticRegression(nSamples=100, nFeatures=4, seed=2);
 
-  var cfg = new BoosterConfig(nTrees=10, maxDepth=2, eta=0.3);
+  var cfg = new BoosterConfig(nTrees=10, numLeaves=4, eta=0.3);
 
   const cuts     = computeBins(train);
   const ensemble = boost(train, new MSE(), cfg);
@@ -103,7 +103,7 @@ proc testPredictClassification() {
   var train = makeSyntheticClassification(nSamples=300, nFeatures=4, nInformative=4, seed=10);
   var test  = makeSyntheticClassification(nSamples=100, nFeatures=4, nInformative=4, seed=11);
 
-  var cfg = new BoosterConfig(nTrees=5, maxDepth=2, eta=0.3);
+  var cfg = new BoosterConfig(nTrees=5, numLeaves=4, eta=0.3);
 
   const cuts     = computeBins(train);
   const ensemble = boost(train, new LogLoss(), cfg);

@@ -13,7 +13,7 @@
   Config constants (override on command line, e.g. --nTrees=200):
     dataFile   path to the CSV           [data/california_housing.csv]
     nTrees     number of boosting rounds [100]
-    maxDepth   maximum tree depth        [6]
+    numLeaves  max leaves per tree       [64]
     eta        learning rate             [0.1]
     lambda     L2 regularisation        [1.0]
     trainFrac  fraction used for train  [0.8]
@@ -30,7 +30,7 @@ use Math;
 
 config const dataFile        : string = "data/california_housing.csv";
 config const nTrees          : int    = 100;
-config const maxDepth        : int    = 6;
+config const numLeaves       : int    = 64;
 config const eta             : real   = 0.1;
 config const lambda          : real   = 1.0;
 config const trainFrac       : real   = 0.8;
@@ -90,7 +90,7 @@ proc main() throws {
   // ---- Train ------------------------------------------------------
   var cfg = new BoosterConfig(
     nTrees          = nTrees,
-    maxDepth        = maxDepth,
+    numLeaves       = numLeaves,
     eta             = eta,
     lambda          = lambda,
     colsampleByTree = colsampleByTree,

@@ -15,7 +15,7 @@
   Config constants (override on command line, e.g. --nTrees=200):
     dataFile   path to the CSV           [data/cover_type.csv]
     nTrees     number of boosting rounds [50]
-    maxDepth   maximum tree depth        [4]
+    numLeaves  max leaves per tree       [16]
     eta        learning rate             [0.1]
     lambda     L2 regularisation        [1.0]
     trainFrac  fraction used for train  [0.8]
@@ -33,7 +33,7 @@ use Time;
 
 config const dataFile        : string = "data/cover_type.csv";
 config const nTrees          : int    = 50;
-config const maxDepth        : int    = 4;
+config const numLeaves       : int    = 16;
 config const eta             : real   = 0.1;
 config const lambda          : real   = 1.0;
 config const trainFrac       : real   = 0.8;
@@ -102,15 +102,21 @@ proc main() throws {
   // ---- Train ------------------------------------------------------
   var cfg = new BoosterConfig(
     nTrees          = nTrees,
-    maxDepth        = maxDepth,
+    numLeaves       = numLeaves,
     eta             = eta,
     lambda          = lambda,
     colsampleByTree = colsampleByTree,
     seed            = seed
   );
 
-  const cuts     = computeBins(train);
+  const cuts = computeBins(train);
+  var trainTimer: stopwatch;
+  trainTimer.start();
   const ensemble = boost(train, new LogLoss(minHess=minHess), cfg);
+  trainTimer.stop();
+  writeln("nTrees: ", nTrees, "  numLeaves: ", numLeaves,
+          "  (elapsed: ", trainTimer.elapsed():string, "s)");
+  writeln();
 
   // ---- Evaluate ---------------------------------------------------
   const trainPreds = predict(ensemble, train);

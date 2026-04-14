@@ -128,4 +128,12 @@ module Splits {
     return -G / (H + lambda);
   }
 
+  // ------------------------------------------------------------------
+  // Backward-compatible overload — use all features (no subsampling).
+  // ------------------------------------------------------------------
+  proc findBestSplits(hist: HistogramData, lambda: real = 1.0, minHess: real = 1.0): [] SplitInfo {
+    const allFeats: [0..#hist.nFeatures] int = [i in 0..#hist.nFeatures] i;
+    return findBestSplits(hist, lambda, minHess, allFeats);
+  }
+
 } // module Splits

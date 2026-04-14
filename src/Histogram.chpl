@@ -141,4 +141,17 @@ module Histogram {
     large.hess = parent.hess - smallChild.hess;
   }
 
+  // ------------------------------------------------------------------
+  // Backward-compatible overloads — use all features (no subsampling).
+  // ------------------------------------------------------------------
+  proc buildHistograms(data: GBMData, nodeId: [] int, ref hist: HistogramData) {
+    const allFeats: [0..#data.numFeatures] int = [i in 0..#data.numFeatures] i;
+    buildHistograms(data, nodeId, hist, allFeats);
+  }
+
+  proc buildHistogramsLeft(data: GBMData, nodeId: [] int, ref hist: HistogramData, depth: int) {
+    const allFeats: [0..#data.numFeatures] int = [i in 0..#data.numFeatures] i;
+    buildHistogramsLeft(data, nodeId, hist, depth, allFeats);
+  }
+
 } // module Histogram
