@@ -10,7 +10,11 @@
   has stride maxNodes; that is a smaller access volume than the scatter.
 
   Key operations:
-    buildHistograms     — full rebuild: accumulate over all samples (depth 0)
+    buildHistograms     — full rebuild: accumulate over all samples (root only)
+    buildHistogramsNode — filtered rebuild: accumulate only samples at one node
+                          (smaller-child pass for the subtraction trick)
+    subtractNode        — in-place: hist[larger] = hist[parent] - hist[smaller]
+                          O(nFeatures × MAX_BINS), derives larger child for free
     buildHistogramsLeft — partial rebuild: accumulate only into left children;
                           right children are derived by subtractSiblings in
                           Booster.chpl (histogram subtraction trick)
@@ -74,6 +78,59 @@ module Histogram {
         const b    = data.Xb[i, f]: int;
         hist.grad[f, b, node] += data.grad[i];
         hist.hess[f, b, node] += data.hess[i];
+      }
+    }
+  }
+
+  // ------------------------------------------------------------------
+  // buildHistogramsNode
+  //
+  // Filtered accumulation: zeros hist for targetNode then accumulates
+  // only samples where nodeId[i] == targetNode.  Used in the subtraction
+  // trick to build the smaller child's histogram in one sample pass;
+  // the larger child is then derived cheaply via subtractNode.
+  //
+  // Cost: O(N) nodeId reads + O(|smaller| × nFeatures) scatter writes.
+  // ------------------------------------------------------------------
+  proc buildHistogramsNode(
+      data       : GBMData,
+      nodeId     : [] int,
+      ref hist   : HistogramData,
+      targetNode : int,
+      featSubset : [] int
+  ) {
+    forall f in featSubset with (ref hist) {
+      hist.grad[f, .., targetNode] = 0.0;
+      hist.hess[f, .., targetNode] = 0.0;
+      for i in data.rowDom {
+        if nodeId[i] == targetNode {
+          const b = data.Xb[i, f]: int;
+          hist.grad[f, b, targetNode] += data.grad[i];
+          hist.hess[f, b, targetNode] += data.hess[i];
+        }
+      }
+    }
+  }
+
+  // ------------------------------------------------------------------
+  // subtractNode
+  //
+  // In-place derivation of the larger child's histogram:
+  //   hist[*, *, larger] = hist[*, *, parent] - hist[*, *, smaller]
+  //
+  // Cost: O(nFeatures × MAX_BINS) — negligible vs. the sample scan.
+  // ------------------------------------------------------------------
+  proc subtractNode(
+      ref hist   : HistogramData,
+      parent     : int,
+      smaller    : int,
+      larger     : int,
+      featSubset : [] int
+  ) {
+    forall f in featSubset with (ref hist) {
+      for b in 0..#MAX_BINS {
+        hist.grad[f, b, larger] = hist.grad[f, b, parent] - hist.grad[f, b, smaller];
+        hist.hess[f, b, larger] = hist.hess[f, b, parent] - hist.hess[f, b, smaller];
       }
     }
   }

@@ -129,6 +129,70 @@ module Splits {
   }
 
   // ------------------------------------------------------------------
+  // findBestSplitsNodes
+  //
+  // Like findBestSplits but only evaluates the nodes listed in nodeList.
+  // Used in the subtraction trick: after each split only the two new
+  // children need new split candidates; all other active leaves keep
+  // their cached SplitInfo from the previous round.
+  // ------------------------------------------------------------------
+  proc findBestSplitsNodes(
+      hist       : HistogramData,
+      lambda     : real,
+      minHess    : real,
+      featSubset : [] int,
+      nodeList   : [] int
+  ): [] SplitInfo {
+
+    var splits: [0..#hist.maxNodes] SplitInfo;
+    const anchorFeat = featSubset[featSubset.domain.low];
+
+    for node in nodeList {
+      const G_P = + reduce hist.grad[anchorFeat, .., node];
+      const H_P = + reduce hist.hess[anchorFeat, .., node];
+
+      if H_P < minHess {
+        splits[node].valid = false;
+        continue;
+      }
+
+      const scoreP   = leafScore(G_P, H_P, lambda);
+      var   bestGain = 0.0;
+
+      for f in featSubset {
+        var G_L = 0.0;
+        var H_L = 0.0;
+
+        for b in 0..<MAX_BINS {
+          G_L += hist.grad[f, b, node];
+          H_L += hist.hess[f, b, node];
+
+          const G_R = G_P - G_L;
+          const H_R = H_P - H_L;
+
+          if H_L < minHess || H_R < minHess then continue;
+
+          const gain = leafScore(G_L, H_L, lambda)
+                     + leafScore(G_R, H_R, lambda)
+                     - scoreP;
+
+          if gain > bestGain {
+            bestGain              = gain;
+            splits[node].feature  = f;
+            splits[node].bin      = b;
+            splits[node].gain     = gain;
+            splits[node].leftGrad = G_L;
+            splits[node].leftHess = H_L;
+            splits[node].valid    = true;
+          }
+        }
+      }
+    }
+
+    return splits;
+  }
+
+  // ------------------------------------------------------------------
   // Backward-compatible overload — use all features (no subsampling).
   // ------------------------------------------------------------------
   proc findBestSplits(hist: HistogramData, lambda: real = 1.0, minHess: real = 1.0): [] SplitInfo {

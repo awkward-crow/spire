@@ -316,3 +316,34 @@ Key changes:
   (depth=4 → numLeaves=16, depth=6 → numLeaves=64).
 
 Result: CoverType 20 trees / 8 leaves → 78% accuracy.
+
+---
+
+### Histogram subtraction trick for leaf-wise growth (implemented)
+
+After each split, instead of rebuilding histograms for all active leaves
+from scratch (O(N × nActive) per split), use the subtraction trick:
+
+1. Identify the smaller child by hess sum (leftHess from cachedSplits vs
+   total parent hess).
+2. `buildHistogramsNode` — scan only samples at the smaller child,
+   accumulate into its node slot.  O(N) reads, O(|smaller| × nFeatures) writes.
+3. `subtractNode` — derive the larger child in-place:
+   `hist[larger] = hist[parent] - hist[smaller]`.  O(nFeatures × MAX_BINS), cheap.
+4. `findBestSplitsNodes` — find splits only for the two new children;
+   all other active leaves keep their cached SplitInfo.
+
+New procs in `src/Histogram.chpl`: `buildHistogramsNode`, `subtractNode`.
+New proc in `src/Splits.chpl`: `findBestSplitsNodes`.
+`src/Booster.chpl` inner loop updated accordingly.
+
+Results (CoverType, 100 trees, 1 locale):
+
+| numLeaves | Full rebuild | Subtraction trick | LightGBM | Chapel test acc | LGBM test acc |
+|-----------|-------------|-------------------|----------|-----------------|---------------|
+| 16        | 161s        | 43s               | 0.8s     | 82.52%          | 82.47%        |
+| 31        | 310s        | 69s               | 0.95s    | 85.09%          | 85.37%        |
+
+3.7–4.5× speedup. Accuracy is bit-identical to the full-rebuild version.
+Remaining gap vs LightGBM (~50–70×) is SIMD histogram kernels + more
+aggressive parallelism.

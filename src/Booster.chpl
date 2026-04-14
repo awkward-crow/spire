@@ -194,17 +194,35 @@ module Booster {
         activeLeaves[nActive] = right;
         nActive += 1;
 
-        // Rebuild histograms for all active leaves and find splits.
-        buildHistograms(data, nodeId, hist, featSubset);
-        const splits = findBestSplits(hist, cfg.lambda, obj.defaultMinHess(), featSubset);
+        // ----------------------------------------------------------
+        // Histogram subtraction trick.
+        //
+        // leftHess and rightHess are known from the cached split.
+        // Scan only the smaller child; derive the larger by subtraction.
+        // Cost: O(N/2) sample scan average vs O(N × nActive) full rebuild.
+        // ----------------------------------------------------------
+        const leftHess  = cachedSplits[bestLeaf].leftHess;
+        const rightHess = (+ reduce hist.hess[anchorFeat, .., bestLeaf]) - leftHess;
+        const smaller   = if leftHess <= rightHess then left  else right;
+        const larger    = if leftHess <= rightHess then right else left;
 
-        // Refresh cached splits and leaf values for every active leaf.
-        for k in 0..#nActive {
-          const leaf = activeLeaves[k];
-          cachedSplits[leaf] = splits[leaf];
-          const G = + reduce hist.grad[anchorFeat, .., leaf];
-          const H = + reduce hist.hess[anchorFeat, .., leaf];
-          trees[t].value[leaf] = cfg.eta * leafValue(G, H, cfg.lambda);
+        buildHistogramsNode(data, nodeId, hist, smaller, featSubset);
+        subtractNode(hist, bestLeaf, smaller, larger, featSubset);
+
+        // Find splits only for the two new children; other active
+        // leaves keep their cached splits (histograms unchanged).
+        const newNodes: [0..#2] int = [left, right];
+        const newSplits = findBestSplitsNodes(hist, cfg.lambda,
+                                              obj.defaultMinHess(),
+                                              featSubset, newNodes);
+        cachedSplits[left]  = newSplits[left];
+        cachedSplits[right] = newSplits[right];
+
+        // Update leaf values for the two new children only.
+        for child in (left, right) {
+          const G = + reduce hist.grad[anchorFeat, .., child];
+          const H = + reduce hist.hess[anchorFeat, .., child];
+          trees[t].value[child] = cfg.eta * leafValue(G, H, cfg.lambda);
         }
       }
 
