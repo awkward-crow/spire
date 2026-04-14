@@ -1,18 +1,16 @@
 # spire -- gradient boosting machines
 
-    claude --resume 750c1825-187f-47bf-ba62-595de9b3086e
+claude --resume c2633297-e74c-42f2-b026-ef54b31e259a
 
-    "cover type" or "resume" ...
+in ./examples,
 
-1. Run ./build/CoverType --logLevel=INFO to see the binning vs boost time split
-  2. Test whether the histogram subtraction trick now pays off at 396k × 54
-  3. Investigate the 3.3/8 CPU utilization — findBestSplits is the likely serial
-  bottleneck
-
-
+```sh
+python -u save_susy.py
+```
 
 ## latest
 
+ - column subsampling, see section below
  - much improved performance, see section below
  - quantile regression on bicycle data
   = Records (MSE, LogLoss, Pinball) replacing the enum Objective + dispatch chains
@@ -25,8 +23,6 @@
 And see `refactor.md`, objectives mature from an enum to separate records.
 
 ## next steps
-
-Add note to examples/readme about cover type
 
 Ordered by performance impact. And try examples with multi-locale!
 
@@ -54,9 +50,9 @@ Ordered by performance impact. And try examples with multi-locale!
    (deeper trees or leaf-wise growth with many leaves) or a heavier inner loop
    (more features/bins).
 
-4. **Column subsampling** — sample a fraction of features per tree.  Directly
-   reduces the `forall f` work proportionally; also the main regularisation knob
-   on wide datasets.
+4. **Column subsampling** — done: `colsampleByTree` in `BoosterConfig`, partial
+   Fisher-Yates with a single persistent RNG.  Training time scales linearly
+   with colsample.  See latest section for numbers.
 
 5. **Row subsampling** — sample a fraction of rows per tree.  Reduces the inner
    `for i in data.rowDom` loop proportionally; aids generalisation.
@@ -149,9 +145,26 @@ new loop is `forall f in 0..#nF with (ref hist)`: each task owns a disjoint
 
 All outputs are numerically identical; 119/119 tests pass.
 
+## column subsampling
+
+ - column subsampling (`colsampleByTree`) — partial Fisher-Yates per tree,
+   single persistent RNG advanced across all trees; exposed as config const
+   in all example drivers.  Timing on CoverType (495 k × 54, 50 trees, depth 4):
+
+   | colsample | wall time | test log-loss |
+   |-----------|-----------|---------------|
+   | 1.0       | 35 s      | 0.4337        |
+   | 0.8       | 32 s      | 0.4413        |
+   | 0.6       | 26 s      | 0.4636        |
+   | 0.4       | 22 s      | 0.4957        |
+
+   Training time scales roughly linearly with colsample.  This dataset has
+   mostly informative features so subsampling hurts accuracy; on wider datasets
+   with redundant features it will help.
+
 ## see also
 
- - file `notes.md`
+ - file `notes.md` in particular `open questions: leaf-wise growth, distributed angle`
  - file `chapel_arkouda_gbm_conversation.md`
  - file `docker.md`
 

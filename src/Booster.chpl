@@ -150,6 +150,10 @@ module Booster {
     const nF    = data.numFeatures;
     const nFSub = max(1, (nF * cfg.colsampleByTree): int);
 
+    // Single RNG advanced continuously across all trees for better
+    // inter-tree diversity than re-seeding per tree with seed+t.
+    var rng = new randomStream(real, seed = cfg.seed);
+
     var boostTimer: stopwatch;
     boostTimer.start();
 
@@ -158,12 +162,11 @@ module Booster {
 
       // ----------------------------------------------------------
       // Column subsampling: draw nFSub features without replacement
-      // using a partial Fisher-Yates shuffle seeded per tree.
+      // using a partial Fisher-Yates shuffle on a single persistent RNG.
       // When colsampleByTree == 1.0, all features are used in order.
       // ----------------------------------------------------------
       var allFeats: [0..#nF] int = [i in 0..#nF] i;
       if nFSub < nF {
-        var rng = new randomStream(real, seed = cfg.seed + t);
         for i in 0..#nFSub {
           const j = i + (rng.next() * (nF - i)): int;
           allFeats[i] <=> allFeats[j];
