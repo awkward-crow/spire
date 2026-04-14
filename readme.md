@@ -2,6 +2,9 @@
 
 claude --resume c2633297-e74c-42f2-b026-ef54b31e259a
 
+
+## pending -- SUSY
+
 in ./examples,
 
 ```sh
@@ -12,64 +15,71 @@ python -u save_susy.py
 
  - column subsampling, see section below
  - much improved performance, see section below
- - quantile regression on bicycle data
-  = Records (MSE, LogLoss, Pinball) replacing the enum Objective + dispatch chains
-  = GBMEnsemble bundling trees + baseScore
-  = BoosterConfig stripped of tau and minHess
-  = boost() generic via duck typing, predict() taking GBMEnsemble
-  = t-digest binning replacing random sampling
-  = Pinball hessian fixed to tau*(1-tau)
-
-And see `refactor.md`, objectives mature from an enum to separate records.
+ - quantile regression, see section below
 
 ## next steps
 
-Ordered by performance impact. And try examples with multi-locale!
+The primary thread is closing the speed gap with LightGBM while building
+toward correct and efficient multi-locale execution.  Current baseline:
+CoverType (396 k × 54, 100 trees, numLeaves=31): Chapel 69 s, LightGBM 0.95 s.
+Accuracy is within 0.3% — the gap is entirely in the histogram kernel.
 
-1. **Histogram subtraction trick** — implemented in `buildHistogramsLeft` +
-   `subtractSiblings` but currently slower on the existing examples (CaliforniaHousing
-   1.21 s vs 0.66 s, Bicycle 0.81 s vs 0.57 s).  After the feature-parallel rewrite
-   each sample pass is so cheap that the extra conditional, per-feature zeroing, and
-   sibling-subtraction arithmetic costs more than it saves.  The trick is designed for
-   the regime where sample passes are expensive — large datasets or many features.
-   The crossover point is above ~20 k samples × 12 features; leave it in and revisit
-   when larger data is available.  Candidate datasets (all public):
-   - **Cover Type** — 581 k × 54, binary classification; `sklearn.datasets.fetch_covtype()`
-   - **Year Prediction MSD** — 515 k × 90, regression; UCI ML Repository
-   - **HIGGS** — 11 M × 28, binary classification; standard GBM stress test
-   - **SUSY** — 5 M × 18, binary classification; UCI ML Repository
+### Performance / multi-locale path (ordered)
 
-2. **Histogram memory layout** — done: `[feature, bin, node]` adopted.  6% faster
-   than `[node, feature, bin]` on CoverType (31.7 s vs 33.7 s); stride-1 node access
-   in the scatter writes is the win.
+1. **Fix histogram remote GETs** — the histogram accumulation loop (`buildHistogramsNode`)
+   iterates over the full block-distributed `data.rowDom` from locale 0, causing remote
+   GETs for every non-local row.  Fix: `coforall loc in Locales` pattern with each locale
+   building a local partial histogram over its `localSubdomain()`, then reducing the
+   partial histograms (~110 KB per locale per split) to locale 0.  This is a correctness
+   fix for multi-locale and a free performance win on single-locale (eliminates false
+   sharing in the feature-parallel loop).
 
-3. **Parallelise `findBestSplits`** — tried `forall node` instead of `for node`;
-   slower at both depth 4 (31 nodes) and depth 6 (127 nodes) on CoverType.  Per-node
-   work (54 features × 255 bins = 13.8 k iterations) is too cheap relative to
-   Qthreads task-creation overhead.  Not worth doing until there are many more nodes
-   (deeper trees or leaf-wise growth with many leaves) or a heavier inner loop
-   (more features/bins).
+2. **Gradient quantization** — quantize `grad`/`hess` from `real` (8 bytes) to `int16`
+   (2 bytes) before the histogram pass; accumulate histogram bins as `int32`; convert
+   back to `real` in `findBestSplitsNodes`.  Expected 2–4× speedup: 4× bandwidth
+   reduction in the scatter loop, smaller histogram arrays (better L2 fit), and smaller
+   reduction payload in multi-locale (110 KB → 28 KB per locale per split).  Pure Chapel,
+   no intrinsics required.
 
-4. **Column subsampling** — done: `colsampleByTree` in `BoosterConfig`, partial
-   Fisher-Yates with a single persistent RNG.  Training time scales linearly
-   with colsample.  See latest section for numbers.
+3. **Batched leaf-wise** — instead of one split per histogram pass, pick the top-k
+   highest-gain active leaves and expand them all in a single sample pass.  Each locale
+   scans its rows once, scattering into k smaller-child slots simultaneously; k
+   subtractions then derive the k larger children.  Cost: O(N) sample reads for k splits
+   instead of O(k × N).  Also reduces the number of `coforall` barriers per tree from
+   O(numLeaves) to O(numLeaves / k) — the key win for multi-locale where barrier cost
+   scales with locale count.
 
-5. **Row subsampling** — sample a fraction of rows per tree.  Reduces the inner
-   `for i in data.rowDom` loop proportionally; aids generalisation.
+4. **Pre-sorted sample indices** — for each feature, pre-sort sample indices by bin
+   value and store as a `uint32[]` index array (one per feature, distributed).  The
+   histogram scatter then accesses bins in monotonically increasing order, improving
+   cache reuse on the histogram array.  One-time preprocessing cost, amortized over all
+   trees.  Pairs well with gradient quantization: smaller elements, faster sort.
 
-6. **Leaf-wise growth** — split only the highest-gain leaf each round instead of
-   the whole depth level.  Fewer total histogram builds for the same number of
-   leaves; changes scaling behaviour.  Larger implementation effort.
+5. **SIMD prefix scan in split finding** — the 255-bin prefix scan in `findBestSplitsNodes`
+   is the natural AVX2 target: sequential, no scatter, fits in L1 cache.  Implement as
+   an `extern` C function using `_mm256` horizontal prefix sums; expect 2–4×.  Single-locale
+   only — runs on locale 0 after the reduction.  Check whether `CHPL_TARGET_CPU=native`
+   already auto-vectorizes this before writing intrinsics.
 
-7. **Early stopping** — halt training when validation loss stops improving.
-   Training-cost feature; no impact on per-tree speed.
+### Remaining features
 
-8. **Min-split-gain pruning** — add `minGain: real = 0.0` to `BoosterConfig`.
-   `findBestSplits` is already fast; this is a regularisation knob, not a
-   performance win.
+- **Row subsampling** — `rowsampleByTree` in `BoosterConfig`; reduces sample scan cost
+  proportionally and aids generalisation on noisy datasets.
 
-9. **Missing value handling** — needed for most real-world datasets beyond the
-   examples here.
+- **Early stopping** — halt training when held-out validation loss stops improving for
+  `earlyStoppingRounds` consecutive trees.  Requires a validation split passed to `boost`.
+
+- **Min-split-gain pruning** — `minGain: real = 0.0` in `BoosterConfig`; check
+  `gain > cfg.minGain` in `findBestSplitsNodes`.  Regularisation knob, not a speed win.
+
+- **Missing value handling** — required for most real-world datasets beyond the current examples.
+
+- **Parallel CSV loading** — current reader is serial: two passes over the file, parsing floats
+  one at a time with `reader.read(real)`.  Rewrote from the original `list(string)` + `split(",")`
+  approach (which allocated ~90M short-lived strings for SUSY) to direct channel float reads —
+  60s vs 74s on 5M rows, ~19% faster.  Next step: divide file into byte-offset chunks, find
+  nearest newline boundary per chunk, parse chunks in parallel.  Should bring 5M-row load
+  from ~60s to single digits.
 
 ## usage/tests
 
@@ -161,6 +171,19 @@ All outputs are numerically identical; 119/119 tests pass.
    Training time scales roughly linearly with colsample.  This dataset has
    mostly informative features so subsampling hurts accuracy; on wider datasets
    with redundant features it will help.
+
+## quantile regression ...
+
+.. on bicycle data; also
+
+  - Records (MSE, LogLoss, Pinball) replacing the enum Objective + dispatch chains
+  - GBMEnsemble bundling trees + baseScore
+  - BoosterConfig stripped of tau and minHess
+  - boost() generic via duck typing, predict() taking GBMEnsemble
+  - t-digest binning replacing random sampling
+  - Pinball hessian fixed to tau*(1-tau)
+
+And see `refactor.md`, objectives mature from an enum to separate records.
 
 ## see also
 
