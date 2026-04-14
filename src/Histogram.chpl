@@ -56,10 +56,10 @@ module Histogram {
   //
   // Accumulates gradient and hessian sums into hist for all active nodes.
   //
-  // nodeId[i] — which tree node sample i belongs to (0-indexed)
-  //
-  // Uses + reduce intent so each task accumulates into a task-local copy
-  // before the final merge, avoiding cross-task races in the inner loop.
+  // NOTE: iterates over the full block-distributed data.rowDom from the
+  // calling locale, causing remote GETs on multi-locale runs.  Kept for
+  // backward compatibility with tests (which run single-locale).  The
+  // Booster.chpl training loop uses buildHistogramsNode instead.
   // ------------------------------------------------------------------
   proc buildHistograms(
       data       : GBMData,
@@ -70,8 +70,6 @@ module Histogram {
     hist.grad = 0.0;
     hist.hess = 0.0;
 
-    // Parallel over features: each task owns a disjoint [*, f, *] slice of
-    // hist, so no data races and no per-task reduce copies are needed.
     forall f in featSubset with (ref hist) {
       for i in data.rowDom {
         const node = nodeId[i];
@@ -85,12 +83,18 @@ module Histogram {
   // ------------------------------------------------------------------
   // buildHistogramsNode
   //
-  // Filtered accumulation: zeros hist for targetNode then accumulates
-  // only samples where nodeId[i] == targetNode.  Used in the subtraction
-  // trick to build the smaller child's histogram in one sample pass;
-  // the larger child is then derived cheaply via subtractNode.
+  // Filtered accumulation: accumulates only samples where
+  // nodeId[i] == targetNode into the corresponding slot of hist.
   //
-  // Cost: O(N) nodeId reads + O(|smaller| × nFeatures) scatter writes.
+  // Multi-locale: each locale accumulates a private [nFeatures, MAX_BINS]
+  // partial histogram over its local rows (no remote GETs in the inner
+  // loop), then bulk-copies its partial to a slot in a locale-indexed
+  // staging array on locale 0.  Locale 0 then reduces the partials into
+  // hist.  Reduction payload: numLocales × nFeatures × MAX_BINS × 8 B
+  // (≈ 110 KB per locale for CoverType).
+  //
+  // Cost: O(N) nodeId reads (local per locale) + O(nFeatures × MAX_BINS)
+  // reduction.
   // ------------------------------------------------------------------
   proc buildHistogramsNode(
       data       : GBMData,
@@ -99,14 +103,48 @@ module Histogram {
       targetNode : int,
       featSubset : [] int
   ) {
+    const nF   = hist.nFeatures;
+    const pDom = {0..#nF, 0..#MAX_BINS};
+
+    // One [nFeatures, MAX_BINS] partial per locale, staged on locale 0.
+    var partialGrad: [0..#numLocales, 0..#nF, 0..#MAX_BINS] real = 0.0;
+    var partialHess: [0..#numLocales, 0..#nF, 0..#MAX_BINS] real = 0.0;
+
+    coforall loc in Locales {
+      on loc {
+        const lid        = loc.id;
+        const localDom   = data.rowDom.localSubdomain();
+        const localFeats = featSubset;   // copy to local memory
+
+        // Private accumulators — all writes are local to this locale.
+        var lg: [pDom] real = 0.0;
+        var lh: [pDom] real = 0.0;
+
+        forall f in localFeats with (ref lg, ref lh) {
+          for i in localDom {
+            if nodeId[i] == targetNode {
+              const b = data.Xb[i, f]: int;
+              lg[f, b] += data.grad[i];
+              lh[f, b] += data.hess[i];
+            }
+          }
+        }
+
+        // Bulk PUT to this locale's slot on locale 0.  Each locale
+        // writes to a disjoint [lid, *, *] slice — no races.
+        partialGrad[lid, 0..#nF, 0..#MAX_BINS] = lg;
+        partialHess[lid, 0..#nF, 0..#MAX_BINS] = lh;
+      }
+    }
+
+    // Reduce partials into hist on locale 0.
     forall f in featSubset with (ref hist) {
       hist.grad[f, .., targetNode] = 0.0;
       hist.hess[f, .., targetNode] = 0.0;
-      for i in data.rowDom {
-        if nodeId[i] == targetNode {
-          const b = data.Xb[i, f]: int;
-          hist.grad[f, b, targetNode] += data.grad[i];
-          hist.hess[f, b, targetNode] += data.hess[i];
+      for loc in 0..#numLocales {
+        for b in 0..#MAX_BINS {
+          hist.grad[f, b, targetNode] += partialGrad[loc, f, b];
+          hist.hess[f, b, targetNode] += partialHess[loc, f, b];
         }
       }
     }

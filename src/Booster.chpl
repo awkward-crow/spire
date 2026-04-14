@@ -134,8 +134,10 @@ module Booster {
       trees[t].leftChild  = -1;
       trees[t].rightChild = -1;
 
-      // Build first histogram (all samples at root, node 0).
-      buildHistograms(data, nodeId, hist, featSubset);
+      // Build first histogram (all samples are at root, node 0).
+      // Uses buildHistogramsNode so the root build goes through the same
+      // multi-locale-correct path as every subsequent split.
+      buildHistogramsNode(data, nodeId, hist, 0, featSubset);
 
       // Root leaf value (overwritten if root gets split).
       {
