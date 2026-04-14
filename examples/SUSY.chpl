@@ -108,8 +108,14 @@ proc main() throws {
     seed            = seed
   );
 
-  const cuts     = computeBins(train);
+  const cuts = computeBins(train);
+  var trainTimer: stopwatch;
+  trainTimer.start();
   const ensemble = boost(train, new LogLoss(minHess=minHess), cfg);
+  trainTimer.stop();
+  writeln("nTrees: ", nTrees, "  numLeaves: ", numLeaves,
+          "  (elapsed: ", trainTimer.elapsed():string, "s)");
+  writeln();
 
   // ---- Evaluate ---------------------------------------------------
   const trainPreds = predict(ensemble, train);
