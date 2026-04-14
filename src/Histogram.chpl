@@ -58,18 +58,17 @@ module Histogram {
   // before the final merge, avoiding cross-task races in the inner loop.
   // ------------------------------------------------------------------
   proc buildHistograms(
-      data    : GBMData,
-      nodeId  : [] int,
-      ref hist: HistogramData
+      data       : GBMData,
+      nodeId     : [] int,
+      ref hist   : HistogramData,
+      featSubset : [] int
   ) {
-    const nF = data.numFeatures;
-
     hist.grad = 0.0;
     hist.hess = 0.0;
 
     // Parallel over features: each task owns a disjoint [*, f, *] slice of
     // hist, so no data races and no per-task reduce copies are needed.
-    forall f in 0..#nF with (ref hist) {
+    forall f in featSubset with (ref hist) {
       for i in data.rowDom {
         const node = nodeId[i];
         const b    = data.Xb[i, f]: int;
@@ -94,16 +93,16 @@ module Histogram {
   //   (2^d − 1), (2^d + 1), (2^d + 3), ...   (odd numbers in level d).
   // ------------------------------------------------------------------
   proc buildHistogramsLeft(
-      data    : GBMData,
-      nodeId  : [] int,
-      ref hist: HistogramData,
-      depth   : int
+      data       : GBMData,
+      nodeId     : [] int,
+      ref hist   : HistogramData,
+      depth      : int,
+      featSubset : [] int
   ) {
-    const nF        = data.numFeatures;
     const firstLeft = (1 << depth) - 1;    // heapIdx(depth, 0) — first left child
     const nLeft     = 1 << (depth - 1);    // 2^(depth-1) left children at this depth
 
-    forall f in 0..#nF with (ref hist) {
+    forall f in featSubset with (ref hist) {
       // Zero only the left-child slots for this feature.
       for ln in 0..#nLeft {
         const left = firstLeft + 2 * ln;

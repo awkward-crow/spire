@@ -8,17 +8,30 @@ and train/test split as Bicycle.chpl.  Reports pinball loss and 80%
 interval metrics for direct comparison.
 
 Usage:
-    python lightgbm_bicycle.py [bicycle.csv]
+    python lightgbm_bicycle.py [bicycle.csv] [--colsample=0.8]
 """
 
 import sys
 import csv
+import logging
+import warnings
 import numpy as np
 import pandas as pd
 import lightgbm as lgb
 
+warnings.filterwarnings("ignore")
+logging.getLogger("lightgbm").setLevel(logging.ERROR)
+
+# ---- Args ------------------------------------------------------------
+csvfile   = "data/bicycle.csv"
+colsample = 1.0
+for arg in sys.argv[1:]:
+    if arg.startswith("--colsample="):
+        colsample = float(arg.split("=")[1])
+    else:
+        csvfile = arg
+
 # ---- Load data -------------------------------------------------------
-csvfile = sys.argv[1] if len(sys.argv) > 1 else "data/bicycle.csv"
 
 with open(csvfile) as f:
     reader = csv.reader(f)
@@ -49,6 +62,7 @@ base_params = {
     "learning_rate":    0.1,
     "reg_lambda":       1.0,
     "min_child_weight": 1.0,
+    "colsample_bytree": colsample,
     "verbose":          -1,
 }
 
@@ -59,7 +73,7 @@ def pinball(pred, true, tau):
 
 # ---- Train and evaluate each quantile --------------------------------
 print("=== Bicycle Quantile Regression — LightGBM ===")
-print(f"Samples: {n}  Features: {X.shape[1]}")
+print(f"Samples: {n}  Features: {X.shape[1]}  colsample_bytree: {colsample}")
 print(f"Train: {n_train}  Test: {n - n_train}")
 print()
 

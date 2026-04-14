@@ -34,6 +34,7 @@ module Booster {
   use Tree;
   use Logger;
   use Time;
+  use Random;
 
   // ------------------------------------------------------------------
   // GBMEnsemble — the complete fitted model
@@ -63,10 +64,12 @@ module Booster {
   // BoosterConfig
   // ------------------------------------------------------------------
   record BoosterConfig {
-    var nTrees   : int  = 100;
-    var maxDepth : int  = 6;
-    var eta      : real = 0.1;    // learning rate (shrinkage)
-    var lambda   : real = 1.0;    // L2 regularisation on leaf weights
+    var nTrees          : int  = 100;
+    var maxDepth        : int  = 6;
+    var eta             : real = 0.1;    // learning rate (shrinkage)
+    var lambda          : real = 1.0;    // L2 regularisation on leaf weights
+    var colsampleByTree : real = 1.0;   // fraction of features sampled per tree
+    var seed            : int  = 42;    // RNG seed for column subsampling
   }
 
   // ------------------------------------------------------------------
@@ -144,11 +147,29 @@ module Booster {
 
     var trees: [0..#cfg.nTrees] FittedTree;
 
+    const nF    = data.numFeatures;
+    const nFSub = max(1, (nF * cfg.colsampleByTree): int);
+
     var boostTimer: stopwatch;
     boostTimer.start();
 
     for t in 0..#cfg.nTrees {
       trees[t] = new FittedTree(cfg.maxDepth);
+
+      // ----------------------------------------------------------
+      // Column subsampling: draw nFSub features without replacement
+      // using a partial Fisher-Yates shuffle seeded per tree.
+      // When colsampleByTree == 1.0, all features are used in order.
+      // ----------------------------------------------------------
+      var allFeats: [0..#nF] int = [i in 0..#nF] i;
+      if nFSub < nF {
+        var rng = new randomStream(real, seed = cfg.seed + t);
+        for i in 0..#nFSub {
+          const j = i + (rng.next() * (nF - i)): int;
+          allFeats[i] <=> allFeats[j];
+        }
+      }
+      const featSubset = allFeats[0..#nFSub];
 
       // ----------------------------------------------------------
       // Step 1: gradients for this round
@@ -176,14 +197,14 @@ module Booster {
 
       for d in 0..cfg.maxDepth {
         if !useHistogramSubtraction || d == 0 {
-          buildHistograms(data, nodeId, hist);
+          buildHistograms(data, nodeId, hist, featSubset);
         } else {
-          buildHistogramsLeft(data, nodeId, hist, d);
+          buildHistogramsLeft(data, nodeId, hist, d, featSubset);
           subtractSiblings(hist, splits, d);
         }
 
         if d < cfg.maxDepth {
-          splits = findBestSplits(hist, cfg.lambda, obj.defaultMinHess());
+          splits = findBestSplits(hist, cfg.lambda, obj.defaultMinHess(), featSubset);
           logSplits(t, d, splits);
           recordLevel(trees[t], splits, hist, d, cfg.lambda, cfg.eta);
           updateNodeAssign(data, splits, nodeId);

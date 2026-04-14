@@ -29,13 +29,15 @@ use Logger;
 use Math;
 use Time;
 
-config const dataFile  : string = "data/breast_cancer.csv";
-config const nTrees    : int    = 50;
-config const maxDepth  : int    = 4;
-config const eta       : real   = 0.1;
-config const lambda    : real   = 1.0;
-config const trainFrac : real   = 0.8;
-config const minHess   : real   = 1e-6;   // minimum hessian sum per leaf
+config const dataFile        : string = "data/breast_cancer.csv";
+config const nTrees          : int    = 50;
+config const maxDepth        : int    = 4;
+config const eta             : real   = 0.1;
+config const lambda          : real   = 1.0;
+config const trainFrac       : real   = 0.8;
+config const minHess         : real   = 1e-6;   // minimum hessian sum per leaf
+config const colsampleByTree : real   = 1.0;
+config const seed            : int    = 1055742;
 
 // ------------------------------------------------------------------
 // accuracy
@@ -93,10 +95,12 @@ proc main() throws {
 
   // ---- Train ------------------------------------------------------
   var cfg = new BoosterConfig(
-    nTrees   = nTrees,
-    maxDepth = maxDepth,
-    eta      = eta,
-    lambda   = lambda
+    nTrees          = nTrees,
+    maxDepth        = maxDepth,
+    eta             = eta,
+    lambda          = lambda,
+    colsampleByTree = colsampleByTree,
+    seed            = seed
   );
 
   const cuts     = computeBins(train);

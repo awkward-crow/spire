@@ -53,19 +53,23 @@ module Splits {
   //           typical value 1.0 for MSE/LogLoss)
   // ------------------------------------------------------------------
   proc findBestSplits(
-      hist    : HistogramData,
-      lambda  : real = 1.0,
-      minHess : real = 1.0
+      hist       : HistogramData,
+      lambda     : real  = 1.0,
+      minHess    : real  = 1.0,
+      featSubset : [] int
   ): [] SplitInfo {
 
     var splits: [0..#hist.maxNodes] SplitInfo;
 
+    // Anchor feature for node totals — any feature in the subset works
+    // (all give the same G_P/H_P by the conservation invariant).
+    const anchorFeat = featSubset[featSubset.domain.low];
+
     for node in 0..#hist.maxNodes {
 
-      // Node totals — sum over bins for feature 0
-      // (all features give the same total by conservation invariant)
-      const G_P = + reduce hist.grad[0, .., node];
-      const H_P = + reduce hist.hess[0, .., node];
+      // Node totals — sum over bins for the anchor feature.
+      const G_P = + reduce hist.grad[anchorFeat, .., node];
+      const H_P = + reduce hist.hess[anchorFeat, .., node];
 
       if H_P < minHess {
         splits[node].valid = false;
@@ -75,7 +79,7 @@ module Splits {
       const scoreP    = leafScore(G_P, H_P, lambda);
       var   bestGain  = 0.0;   // only accept positive gains
 
-      for f in 0..#hist.nFeatures {
+      for f in featSubset {
         var G_L = 0.0;
         var H_L = 0.0;
 

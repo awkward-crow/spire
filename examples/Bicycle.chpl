@@ -32,12 +32,14 @@ use Objectives;
 use Logger;
 use Math;
 
-config const dataFile  : string = "data/bicycle.csv";
-config const nTrees    : int    = 50;
-config const maxDepth  : int    = 4;
-config const eta       : real   = 0.1;
-config const lambda    : real   = 1.0;
-config const trainFrac : real   = 0.8;
+config const dataFile        : string = "data/bicycle.csv";
+config const nTrees          : int    = 50;
+config const maxDepth        : int    = 4;
+config const eta             : real   = 0.1;
+config const lambda          : real   = 1.0;
+config const trainFrac       : real   = 0.8;
+config const colsampleByTree : real   = 1.0;
+config const seed            : int    = 1055742;
 
 // ------------------------------------------------------------------
 // trainTestSplit
@@ -87,10 +89,12 @@ proc main() throws {
   // obj.initF(train) which sets train.F to the tau-quantile of y
   // before training starts.
   var cfg = new BoosterConfig(
-    nTrees   = nTrees,
-    maxDepth = maxDepth,
-    eta      = eta,
-    lambda   = lambda
+    nTrees          = nTrees,
+    maxDepth        = maxDepth,
+    eta             = eta,
+    lambda          = lambda,
+    colsampleByTree = colsampleByTree,
+    seed            = seed
   );
 
   writeln("Pinball loss:");
