@@ -9,13 +9,14 @@
     - Optional single header row (skipped by default).
     - One column is the label; the rest become features (X).
 
-  Algorithm:
-    Pass 1 — scan for line count and column count; no line storage.
-    Pass 2 — read floats directly from the channel into GBMData.
-              reader.read(real) parses the next float literal (including
-              scientific notation), skipping leading whitespace.  Commas
-              are consumed explicitly with readByte().  Zero intermediate
-              string allocation in the hot loop.
+  Algorithm (parallel):
+    Step 1 — read first data line to infer column count.
+    Step 2 — divide file into here.maxTaskPar byte-range chunks; find the
+              newline boundary that aligns each chunk to a whole row.
+    Step 3 — parallel pass 1: each task counts its rows via readLine.
+    Step 4 — prefix-sum row counts; allocate GBMData once.
+    Step 5 — parallel pass 2: each task rereads its chunk, parsing floats
+              directly with reader.read(real) and readThrough(",").
 
   Feature column ordering: columns are mapped to feature indices 0..
   left-to-right, skipping labelCol.  E.g. with labelCol=2 and 4 cols:
@@ -29,6 +30,7 @@ module CSVReader {
 
   use DataLayout;
   use IO;
+  use FileSystem;
   use Logger;
 
   // ------------------------------------------------------------------
@@ -44,33 +46,19 @@ module CSVReader {
       hasHeader : bool = true
   ): GBMData throws {
 
-    // ---- Pass 1: count rows and columns (no line storage) -----------
-    // Read line-by-line only to count; each line string is immediately
-    // discarded.  Column count is inferred from the first relevant line.
-    var nSamples  = 0;
-    var nCols     = 0;
+    // ---- Step 1: infer column count from first data line ------------
+    var nCols = 0;
     {
       var f      = open(filename, ioMode.r);
       var reader = f.reader(locking=false);
       var line   : string;
-      var firstLine = true;
-
-      while reader.readLine(line) {
+      if hasHeader then reader.readLine(line);  // skip header
+      if reader.readLine(line) {
         const s = line.strip();
-        if s == "" then continue;
-
-        if firstLine {
-          // Infer column count from the first line (header or data).
-          nCols = s.count(",") + 1;
-          firstLine = false;
-          if hasHeader then continue;   // header: cols counted, not a data row
-        }
-        nSamples += 1;
+        nCols = s.count(",") + 1;
       }
     }
 
-    if nSamples == 0 then
-      halt("readCSV: no data rows in '" + filename + "'");
     if nCols < 2 then
       halt("readCSV: need at least 2 columns, got " + nCols:string);
 
@@ -81,39 +69,91 @@ module CSVReader {
       halt("readCSV: labelCol " + lCol:string
          + " out of range 0.." + (nCols-1):string);
 
-    // ---- Allocate GBMData ------------------------------------------
+    // ---- Step 2: find newline-aligned chunk boundaries --------------
+    // We seek to rawStart = tid * (fsize / nTasks) then scan forward
+    // until the next newline.  This is O(nTasks × avgLineLen) bytes of
+    // sequential IO — negligible compared to the full file read.
+    const fsize   = getFileSize(filename);
+    const nTasks  = here.maxTaskPar;
+    const rawChunk = fsize / nTasks;
+
+    // chunkBounds[tid] = byte offset where task tid begins reading.
+    // chunkBounds[nTasks] = fsize (sentinel for the last task).
+    var chunkBounds: [0..nTasks] int;
+    chunkBounds[0]      = 0;
+    chunkBounds[nTasks] = fsize;
+
+    for tid in 1..#(nTasks - 1) {
+      const rawStart = tid * rawChunk;
+      var f = open(filename, ioMode.r);
+      var r = f.reader(locking=false, region=rawStart..);
+      var b: uint(8);
+      while r.readByte(b) && b != 10 {}   // scan to (and consume) newline
+      chunkBounds[tid] = r.offset();       // absolute position after newline
+    }
+
+    // Task 0: if there is a header, advance past it.
+    if hasHeader {
+      var f = open(filename, ioMode.r);
+      var r = f.reader(locking=false);
+      var line: string;
+      r.readLine(line);
+      chunkBounds[0] = r.offset();
+    }
+
+    // ---- Step 3: parallel row counting ------------------------------
+    var rowCounts: [0..#nTasks] int;
+
+    coforall tid in 0..#nTasks with (ref rowCounts) {
+      const start = chunkBounds[tid];
+      const end_  = chunkBounds[tid + 1];
+      var f = open(filename, ioMode.r);
+      var r = f.reader(locking=false, region=start..<end_);
+      var line: string;
+      while r.readLine(line) { rowCounts[tid] += 1; }
+    }
+
+    const nSamples = + reduce rowCounts;
+    if nSamples == 0 then
+      halt("readCSV: no data rows in '" + filename + "'");
+
+    // ---- Prefix-sum row offsets -------------------------------------
+    var rowOffsets: [0..#nTasks] int;
+    rowOffsets[0] = 0;
+    for tid in 1..#(nTasks - 1) do
+      rowOffsets[tid] = rowOffsets[tid - 1] + rowCounts[tid - 1];
+
+    // ---- Step 4: allocate GBMData -----------------------------------
     var data = new GBMData(numSamples=nSamples, numFeatures=nFeatures);
 
-    // ---- Pass 2: parse floats directly from channel ----------------
-    // reader.read(real) handles scientific notation and skips leading
-    // whitespace (including newlines between rows).  The comma between
-    // fields is consumed by readByte(); the trailing newline on each
-    // row is consumed as whitespace by the first read(real) of the
-    // next row.
-    {
-      var f      = open(filename, ioMode.r);
-      var reader = f.reader(locking=false);
+    // ---- Step 5: parallel float parsing -----------------------------
+    // Each task reopens the file at its chunk start and parses exactly
+    // rowCounts[tid] rows, writing into its slice of data.X / data.y.
+    // Writes are to disjoint row ranges so no locking is required.
+    coforall tid in 0..#nTasks with (ref data) {
+      const start  = chunkBounds[tid];
+      const nRows  = rowCounts[tid];
+      const rowOff = rowOffsets[tid];
 
-      if hasHeader {
-        var line: string;
-        reader.readLine(line);   // discard header
-      }
+      var f = open(filename, ioMode.r);
+      var r = f.reader(locking=false, region=start..);
 
-      for i in 0..#nSamples {
-        var feat = 0;
+      for i in 0..#nRows {
+        const row = rowOff + i;
+        var feat  = 0;
         for col in 0..#nCols {
           var v: real;
-          reader.read(v);
-          if col == lCol then data.y[i] = v;
-          else           { data.X[i, feat] = v; feat += 1; }
-          if col < nCols - 1 then reader.readThrough(",");  // skip whitespace + ','
+          r.read(v);
+          if col == lCol then data.y[row] = v;
+          else           { data.X[row, feat] = v; feat += 1; }
+          if col < nCols - 1 then r.readThrough(",");
         }
-        // trailing '\n' is consumed as whitespace by the next read(real)
       }
     }
 
     logInfo("readCSV: loaded " + nSamples:string + " rows x "
-          + nFeatures:string + " features from '" + filename + "'");
+          + nFeatures:string + " features from '" + filename + "'"
+          + " (" + nTasks:string + " tasks)");
 
     return data;
   }

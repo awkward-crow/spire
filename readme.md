@@ -2,15 +2,6 @@
 
 claude --resume c2633297-e74c-42f2-b026-ef54b31e259a
 
-
-## pending -- SUSY
-
-in ./examples,
-
-```sh
-python -u save_susy.py
-```
-
 ## latest
 
  - column subsampling, see section below
@@ -74,12 +65,11 @@ Accuracy is within 0.3% — the gap is entirely in the histogram kernel.
 
 - **Missing value handling** — required for most real-world datasets beyond the current examples.
 
-- **Parallel CSV loading** — current reader is serial: two passes over the file, parsing floats
-  one at a time with `reader.read(real)`.  Rewrote from the original `list(string)` + `split(",")`
-  approach (which allocated ~90M short-lived strings for SUSY) to direct channel float reads —
-  60s vs 74s on 5M rows, ~19% faster.  Next step: divide file into byte-offset chunks, find
-  nearest newline boundary per chunk, parse chunks in parallel.  Should bring 5M-row load
-  from ~60s to single digits.
+- **Parallel CSV loading** — done.  `readCSV` now divides the file into
+  `here.maxTaskPar` byte-range chunks, aligns each to the nearest newline boundary,
+  counts rows in parallel (pass 1), allocates once, then parses floats in parallel
+  (pass 2).  On SUSY (5M rows, 18 features): 60s serial → 14.8s parallel on 4 cores
+  (4× speedup).  All 119 tests pass; accuracy unchanged.
 
 ## usage/tests
 
