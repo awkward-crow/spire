@@ -4,6 +4,8 @@ claude --resume c2633297-e74c-42f2-b026-ef54b31e259a
 
 ## latest
 
+ - float32 gradient quantization: y, grad, hess, histogram bins all real(32); F stays real(64)
+ - parallel CSV loading: 4× speedup on SUSY (60s → 15s), see section below
  - column subsampling, see section below
  - much improved performance, see section below
  - quantile regression, see section below
@@ -17,20 +19,21 @@ Accuracy is within 0.3% — the gap is entirely in the histogram kernel.
 
 ### Performance / multi-locale path (ordered)
 
-1. **Fix histogram remote GETs** — the histogram accumulation loop (`buildHistogramsNode`)
-   iterates over the full block-distributed `data.rowDom` from locale 0, causing remote
-   GETs for every non-local row.  Fix: `coforall loc in Locales` pattern with each locale
-   building a local partial histogram over its `localSubdomain()`, then reducing the
-   partial histograms (~110 KB per locale per split) to locale 0.  This is a correctness
-   fix for multi-locale and a free performance win on single-locale (eliminates false
-   sharing in the feature-parallel loop).
+1. ~~**Fix histogram remote GETs**~~ — done.  `buildHistogramsNode` now uses
+   `coforall loc in Locales`, each locale accumulating into a local `real(32)`
+   partial histogram over its `localSubdomain()` before reducing to locale 0.
 
-2. **Gradient quantization** — quantize `grad`/`hess` from `real` (8 bytes) to `int16`
-   (2 bytes) before the histogram pass; accumulate histogram bins as `int32`; convert
-   back to `real` in `findBestSplitsNodes`.  Expected 2–4× speedup: 4× bandwidth
-   reduction in the scatter loop, smaller histogram arrays (better L2 fit), and smaller
-   reduction payload in multi-locale (110 KB → 28 KB per locale per split).  Pure Chapel,
-   no intrinsics required.
+2. ~~**Gradient quantization**~~ — done.  `y`, `grad`, `hess`, and all histogram
+   bins are `real(32)`; `F` stays `real(64)` for prediction accuracy.  Halves
+   per-sample read bandwidth in the scatter loop and halves the multi-locale
+   reduction payload (~55 KB per locale per split vs ~110 KB).  Single-locale
+   training time is within noise of float64 (bottleneck is random histogram
+   writes, not sequential grad reads); multi-locale benefit will be larger.
+
+   Also: interleave grad and hess a la lightGBM for a bit of cache localization.
+
+   Questions:
+    - branching in inline proc sigmoid?
 
 3. **Batched leaf-wise** — instead of one split per histogram pass, pick the top-k
    highest-gain active leaves and expand them all in a single sample pass.  Each locale
@@ -44,7 +47,7 @@ Accuracy is within 0.3% — the gap is entirely in the histogram kernel.
    value and store as a `uint32[]` index array (one per feature, distributed).  The
    histogram scatter then accesses bins in monotonically increasing order, improving
    cache reuse on the histogram array.  One-time preprocessing cost, amortized over all
-   trees.  Pairs well with gradient quantization: smaller elements, faster sort.
+   trees.
 
 5. **SIMD prefix scan in split finding** — the 255-bin prefix scan in `findBestSplitsNodes`
    is the natural AVX2 target: sequential, no scatter, fits in L1 cache.  Implement as
