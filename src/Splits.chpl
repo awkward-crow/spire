@@ -68,6 +68,7 @@ module Splits {
     for node in 0..#hist.maxNodes {
 
       // Node totals — sum over bins for the anchor feature.
+      // real(32) reduces; Chapel widens to real(64) when mixed with lambda.
       const G_P = + reduce hist.grad[anchorFeat, .., node];
       const H_P = + reduce hist.hess[anchorFeat, .., node];
 
@@ -80,8 +81,8 @@ module Splits {
       var   bestGain  = 0.0;   // only accept positive gains
 
       for f in featSubset {
-        var G_L = 0.0;
-        var H_L = 0.0;
+        var G_L: real(32) = 0.0: real(32);
+        var H_L: real(32) = 0.0: real(32);
 
         for b in 0..<MAX_BINS {
           G_L += hist.grad[f, b, node];
@@ -148,7 +149,7 @@ module Splits {
     const anchorFeat = featSubset[featSubset.domain.low];
 
     for node in nodeList {
-      const G_P = + reduce hist.grad[anchorFeat, .., node];
+      const G_P = + reduce hist.grad[anchorFeat, .., node];  // real(32)
       const H_P = + reduce hist.hess[anchorFeat, .., node];
 
       if H_P < minHess {
@@ -160,8 +161,8 @@ module Splits {
       var   bestGain = 0.0;
 
       for f in featSubset {
-        var G_L = 0.0;
-        var H_L = 0.0;
+        var G_L: real(32) = 0.0: real(32);
+        var H_L: real(32) = 0.0: real(32);
 
         for b in 0..<MAX_BINS {
           G_L += hist.grad[f, b, node];

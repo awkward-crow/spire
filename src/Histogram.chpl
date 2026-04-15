@@ -15,14 +15,21 @@
                           (smaller-child pass for the subtraction trick)
     subtractNode        — in-place: hist[larger] = hist[parent] - hist[smaller]
                           O(nFeatures × MAX_BINS), derives larger child for free
-    buildHistogramsLeft — partial rebuild: accumulate only into left children;
-                          right children are derived by subtractSiblings in
-                          Booster.chpl (histogram subtraction trick)
+    buildHistogramsLeft — partial rebuild: accumulate only into left children
     subtractHistograms  — derive larger child hist as parent minus smaller child
                           (low-level helper; also used directly in tests)
 
   buildHistograms parallelises over features: each task owns a disjoint
   [*, f, *] slice so no reduce copies are needed.
+
+  Gradient storage is real(32) throughout (data.grad, data.hess, and the
+  histogram bins).  Benefits vs real(64):
+    - Histogram arrays 2× smaller → better L2 cache fit for the bin scan
+    - Local accumulator (lg, lh) 2× smaller → better L1 fit per feature
+    - Multi-locale reduction payload 2× smaller (≈55 KB per locale per
+      split for CoverType vs ≈110 KB)
+  Callers in Splits.chpl and Booster.chpl mix real(32) histogram values
+  with real(64) lambda/eta; Chapel widens as needed.
 */
 
 module Histogram {
@@ -34,15 +41,15 @@ module Histogram {
   // HistogramData record
   //
   // Plain (non-distributed) arrays — small enough to live on locale 0.
-  // Indexed [node, feature, bin].
+  // Indexed [feature, bin, node].  real(32) to halve memory vs real(64).
   // ------------------------------------------------------------------
   record HistogramData {
     var maxNodes  : int;
     var nFeatures : int;
 
     var histDom : domain(3);
-    var grad    : [histDom] real;
-    var hess    : [histDom] real;
+    var grad    : [histDom] real(32);
+    var hess    : [histDom] real(32);
 
     proc init(maxNodes: int, nFeatures: int) {
       this.maxNodes  = maxNodes;
@@ -67,8 +74,8 @@ module Histogram {
       ref hist   : HistogramData,
       featSubset : [] int
   ) {
-    hist.grad = 0.0;
-    hist.hess = 0.0;
+    hist.grad = 0: real(32);
+    hist.hess = 0: real(32);
 
     forall f in featSubset with (ref hist) {
       for i in data.rowDom {
@@ -90,8 +97,8 @@ module Histogram {
   // partial histogram over its local rows (no remote GETs in the inner
   // loop), then bulk-copies its partial to a slot in a locale-indexed
   // staging array on locale 0.  Locale 0 then reduces the partials into
-  // hist.  Reduction payload: numLocales × nFeatures × MAX_BINS × 8 B
-  // (≈ 110 KB per locale for CoverType).
+  // hist.  Reduction payload: numLocales × nFeatures × MAX_BINS × 4 B
+  // (≈55 KB per locale for CoverType).
   //
   // Cost: O(N) nodeId reads (local per locale) + O(nFeatures × MAX_BINS)
   // reduction.
@@ -106,19 +113,17 @@ module Histogram {
     const nF   = hist.nFeatures;
     const pDom = {0..#nF, 0..#MAX_BINS};
 
-    // One [nFeatures, MAX_BINS] partial per locale, staged on locale 0.
-    var partialGrad: [0..#numLocales, 0..#nF, 0..#MAX_BINS] real = 0.0;
-    var partialHess: [0..#numLocales, 0..#nF, 0..#MAX_BINS] real = 0.0;
+    var partialGrad: [0..#numLocales, 0..#nF, 0..#MAX_BINS] real(32) = 0: real(32);
+    var partialHess: [0..#numLocales, 0..#nF, 0..#MAX_BINS] real(32) = 0: real(32);
 
     coforall loc in Locales {
       on loc {
         const lid        = loc.id;
         const localDom   = data.rowDom.localSubdomain();
-        const localFeats = featSubset;   // copy to local memory
+        const localFeats = featSubset;
 
-        // Private accumulators — all writes are local to this locale.
-        var lg: [pDom] real = 0.0;
-        var lh: [pDom] real = 0.0;
+        var lg: [pDom] real(32) = 0: real(32);
+        var lh: [pDom] real(32) = 0: real(32);
 
         forall f in localFeats with (ref lg, ref lh) {
           for i in localDom {
@@ -130,17 +135,14 @@ module Histogram {
           }
         }
 
-        // Bulk PUT to this locale's slot on locale 0.  Each locale
-        // writes to a disjoint [lid, *, *] slice — no races.
         partialGrad[lid, 0..#nF, 0..#MAX_BINS] = lg;
         partialHess[lid, 0..#nF, 0..#MAX_BINS] = lh;
       }
     }
 
-    // Reduce partials into hist on locale 0.
     forall f in featSubset with (ref hist) {
-      hist.grad[f, .., targetNode] = 0.0;
-      hist.hess[f, .., targetNode] = 0.0;
+      hist.grad[f, .., targetNode] = 0: real(32);
+      hist.hess[f, .., targetNode] = 0: real(32);
       for loc in 0..#numLocales {
         for b in 0..#MAX_BINS {
           hist.grad[f, b, targetNode] += partialGrad[loc, f, b];
@@ -179,13 +181,6 @@ module Histogram {
   // Histogram subtraction trick: only accumulate into left children
   // (odd heap index) at this depth.  Parallel over features, same as
   // buildHistograms.
-  //
-  // Only the left-child slots for this depth are zeroed; parent slots
-  // from the previous depth are left intact so that Booster.chpl can
-  // derive right children as  parent − left  via subtractSiblings.
-  //
-  // depth >= 1.  Left children at depth d have heap indices
-  //   (2^d − 1), (2^d + 1), (2^d + 3), ...   (odd numbers in level d).
   // ------------------------------------------------------------------
   proc buildHistogramsLeft(
       data       : GBMData,
@@ -194,21 +189,15 @@ module Histogram {
       depth      : int,
       featSubset : [] int
   ) {
-    const firstLeft = (1 << depth) - 1;    // heapIdx(depth, 0) — first left child
-    const nLeft     = 1 << (depth - 1);    // 2^(depth-1) left children at this depth
+    const firstLeft = (1 << depth) - 1;
+    const nLeft     = 1 << (depth - 1);
 
     forall f in featSubset with (ref hist) {
-      // Zero only the left-child slots for this feature.
       for ln in 0..#nLeft {
         const left = firstLeft + 2 * ln;
-        hist.grad[f, .., left] = 0.0;
-        hist.hess[f, .., left] = 0.0;
+        hist.grad[f, .., left] = 0: real(32);
+        hist.hess[f, .., left] = 0: real(32);
       }
-      // Accumulate samples in left children at this depth.
-      // Both conditions are required:
-      //   node & 1 == 1    — left children have odd heap indices
-      //   node >= firstLeft — exclude samples retained at shallower
-      //                       leaf nodes (their nodeId < firstLeft)
       for i in data.rowDom {
         const node = nodeId[i];
         if node & 1 == 1 && node >= firstLeft {
@@ -224,8 +213,7 @@ module Histogram {
   // subtractHistograms
   //
   // Derives the larger child's histogram as parent - smallerChild.
-  // Low-level helper used in tests; see subtractSiblings in Booster.chpl
-  // for the in-loop version that operates on node indices.
+  // Low-level helper used in tests.
   // ------------------------------------------------------------------
   proc subtractHistograms(
       parent     : HistogramData,

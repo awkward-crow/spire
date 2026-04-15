@@ -15,7 +15,7 @@ use SyntheticData;
 use Objectives;
 use Math;
 
-const EPS = 1e-10;
+const EPS = 1e-4;
 
 // ------------------------------------------------------------------
 // Helpers

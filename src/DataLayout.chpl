@@ -43,10 +43,10 @@ module DataLayout {
 
     // 1-D arrays — same block distribution over the sample dimension
     var rowDom : domain(1) dmapped new blockDist(boundingBox={0..#numSamples});
-    var y      : [rowDom] real;   // targets (0.0/1.0 for classification, real for regression)
-    var F      : [rowDom] real;   // current predictions (logits for classification)
-    var grad   : [rowDom] real;   // gradient per sample
-    var hess   : [rowDom] real;   // hessian per sample
+    var y      : [rowDom] real(32);  // targets — float32 sufficient; F stays float64
+    var F      : [rowDom] real;      // current predictions (logits for classification)
+    var grad   : [rowDom] real(32);  // gradient per sample
+    var hess   : [rowDom] real(32);  // hessian per sample
 
     proc init(numSamples: int, numFeatures: int) {
       this.numSamples  = numSamples;
@@ -69,7 +69,7 @@ module DataLayout {
     writeln("  Locales  : ", numLocales);
 
     // Label distribution (works for both classification and regression)
-    const yMean = (+ reduce data.y) / data.numSamples : real;
+    const yMean = (+ reduce data.y) / data.numSamples: real(32);
     const yMin  = min reduce data.y;
     const yMax  = max reduce data.y;
     writeln("  y mean   : ", yMean);

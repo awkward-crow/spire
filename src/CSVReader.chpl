@@ -144,7 +144,7 @@ module CSVReader {
         for col in 0..#nCols {
           var v: real;
           r.read(v);
-          if col == lCol then data.y[row] = v;
+          if col == lCol then data.y[row] = v: real(32);
           else           { data.X[row, feat] = v; feat += 1; }
           if col < nCols - 1 then r.readThrough(",");
         }

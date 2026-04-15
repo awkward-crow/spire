@@ -31,13 +31,22 @@ module Objectives {
   // Helpers
   // ------------------------------------------------------------------
 
-  // Numerically stable sigmoid
+  // Numerically stable sigmoid — float64 and float32 overloads
   inline proc sigmoid(x: real): real {
     if x >= 0.0 then
       return 1.0 / (1.0 + exp(-x));
     else {
       const e = exp(x);
       return e / (1.0 + e);
+    }
+  }
+
+  inline proc sigmoid(x: real(32)): real(32) {
+    if x >= 0.0: real(32) then
+      return 1.0: real(32) / (1.0: real(32) + exp(-x));
+    else {
+      const e = exp(x);
+      return e / (1.0: real(32) + e);
     }
   }
 
@@ -54,22 +63,22 @@ module Objectives {
   // ------------------------------------------------------------------
   record MSE {
     proc initF(ref data: GBMData): real {
-      const baseScore = (+ reduce data.y) / data.numSamples: real;
+      const baseScore = (+ reduce data.y): real / data.numSamples: real;
       data.F = baseScore;
       return baseScore;
     }
-    proc gradients(F: [] real, y: [] real,
-                   ref g: [] real, ref h: [] real) {
+    proc gradients(F: [] real, y: [] real(32),
+                   ref g: [] real(32), ref h: [] real(32)) {
       forall i in F.domain {
-        g[i] = F[i] - y[i];
-        h[i] = 1.0;
+        g[i] = F[i]: real(32) - y[i];
+        h[i] = 1.0: real(32);
       }
     }
-    proc loss(F: [] real, y: [] real): real { return mseLoss(F, y); }
-    proc defaultMinHess(): real             { return 1.0; }
+    proc loss(F: [] real, y: [] real(32)): real { return mseLoss(F, y); }
+    proc defaultMinHess(): real                 { return 1.0; }
     // Newton step is the exact minimiser for MSE — no refit needed.
     proc leafRefit(ref tree: FittedTree, nodeId: [] int,
-                   F: [] real, y: [] real, eta: real) { }
+                   F: [] real, y: [] real(32), eta: real) { }
   }
 
   // ------------------------------------------------------------------
@@ -86,25 +95,25 @@ module Objectives {
     var minHess: real = 1e-6;
 
     proc initF(ref data: GBMData): real {
-      const pMean = (+ reduce data.y) / data.numSamples: real;
+      const pMean = (+ reduce data.y): real / data.numSamples: real;
       const p     = max(1e-7, min(1.0 - 1e-7, pMean));
       const baseScore = log(p / (1.0 - p));
       data.F = baseScore;
       return baseScore;
     }
-    proc gradients(F: [] real, y: [] real,
-                   ref g: [] real, ref h: [] real) {
+    proc gradients(F: [] real, y: [] real(32),
+                   ref g: [] real(32), ref h: [] real(32)) {
       forall i in F.domain {
-        const p = sigmoid(F[i]);
+        const p = sigmoid(F[i]: real(32));
         g[i] = p - y[i];
-        h[i] = max(p * (1.0 - p), 1e-16);
+        h[i] = max(p * (1.0: real(32) - p), 1e-16: real(32));
       }
     }
-    proc loss(F: [] real, y: [] real): real { return logLoss(F, y); }
-    proc defaultMinHess(): real             { return minHess; }
+    proc loss(F: [] real, y: [] real(32)): real { return logLoss(F, y); }
+    proc defaultMinHess(): real                 { return minHess; }
     // Newton step is well-defined for LogLoss — no refit needed.
     proc leafRefit(ref tree: FittedTree, nodeId: [] int,
-                   F: [] real, y: [] real, eta: real) { }
+                   F: [] real, y: [] real(32), eta: real) { }
   }
 
   // ------------------------------------------------------------------
@@ -123,7 +132,7 @@ module Objectives {
 
     proc initF(ref data: GBMData): real {
       var yLocal: [0..#data.numSamples] real;
-      forall i in data.rowDom do yLocal[i] = data.y[i];
+      forall i in data.rowDom do yLocal[i] = data.y[i]: real;
       sort(yLocal);
       const qIdx = min((tau * data.numSamples: real): int,
                        data.numSamples - 1);
@@ -132,30 +141,24 @@ module Objectives {
       return baseScore;
     }
 
-    proc gradients(F: [] real, y: [] real,
-                   ref g: [] real, ref h: [] real) {
+    proc gradients(F: [] real, y: [] real(32),
+                   ref g: [] real(32), ref h: [] real(32)) {
       if tau <= 0.0 || tau >= 1.0 then
         halt("Pinball tau must be in (0, 1), got: " + tau:string);
-      // Hessian = tau*(1-tau): Fisher information of the asymmetric Laplace
-      // distribution.  Using 1.0 (the piecewise-linear true hessian
-      // approximation) bounds leaf values to O(tau), giving steps of
-      // eta*tau ≈ 0.01 for tau=0.1 — far too small for real-valued targets.
-      // tau*(1-tau) scales leaf values to O(1) regardless of tau, matching
-      // the convergence rate of MSE.
-      const hessVal = tau * (1.0 - tau);
+      const hessVal: real(32) = (tau * (1.0 - tau)): real(32);
       forall i in F.domain {
-        const residual = y[i] - F[i];
+        const residual = y[i]: real - F[i];   // float64 comparison
         if residual > 0.0 then
-          g[i] = -tau;
+          g[i] = (-tau): real(32);
         else if residual < 0.0 then
-          g[i] = 1.0 - tau;
+          g[i] = (1.0 - tau): real(32);
         else
-          g[i] = 0.0;
+          g[i] = 0.0: real(32);
         h[i] = hessVal;
       }
     }
 
-    proc loss(F: [] real, y: [] real): real { return pinballLoss(F, y, tau); }
+    proc loss(F: [] real, y: [] real(32)): real { return pinballLoss(F, y, tau); }
     // minHess = tau*(1-tau) keeps the 1-sample-per-leaf threshold consistent
     // with the new hessian scale.  Returning 1.0 would require ~1/(tau*(1-tau))
     // samples minimum, which over-prunes for extreme tau values.
@@ -172,7 +175,7 @@ module Objectives {
     // nodeId[i] contains the leaf heap index for sample i — valid after
     // finalizeLeaves, before applyTree is called.
     proc leafRefit(ref tree: FittedTree, nodeId: [] int,
-                   F: [] real, y: [] real, eta: real) {
+                   F: [] real, y: [] real(32), eta: real) {
       if tau <= 0.0 || tau >= 1.0 then
         halt("Pinball tau must be in (0, 1), got: " + tau:string);
 
@@ -184,7 +187,7 @@ module Objectives {
       var localResidual: [0..#nSamples] real;
       forall i in nodeId.domain {
         localNodeId[i]   = nodeId[i];
-        localResidual[i] = y[i] - F[i];
+        localResidual[i] = y[i]: real - F[i];
       }
 
       // Scratch buffer — reused across leaves; sized to worst case (all
@@ -217,24 +220,24 @@ module Objectives {
   // Standalone loss functions — useful in tests and drivers
   // ------------------------------------------------------------------
 
-  proc mseLoss(F: [] real, y: [] real): real {
-    return (+ reduce [(i) in F.domain] (F[i] - y[i])**2) / F.size: real;
+  proc mseLoss(F: [] real, y: [] real(32)): real {
+    return (+ reduce [(i) in F.domain] (F[i] - y[i]: real)**2) / F.size: real;
   }
 
-  proc logLoss(F: [] real, y: [] real): real {
+  proc logLoss(F: [] real, y: [] real(32)): real {
     const eps = 1e-15;
     var s: real = 0.0;
     forall i in F.domain with (+ reduce s) {
       const p = clamp(sigmoid(F[i]), eps, 1.0 - eps);
-      s += -(y[i] * log(p) + (1.0 - y[i]) * log(1.0 - p));
+      s += -(y[i]: real * log(p) + (1.0 - y[i]: real) * log(1.0 - p));
     }
     return s / F.size: real;
   }
 
-  proc pinballLoss(F: [] real, y: [] real, tau: real): real {
+  proc pinballLoss(F: [] real, y: [] real(32), tau: real): real {
     var s: real = 0.0;
     forall i in F.domain with (+ reduce s) {
-      const r = y[i] - F[i];
+      const r = y[i]: real - F[i];
       s += if r > 0.0 then tau * r else (tau - 1.0) * r;
     }
     return s / F.size: real;

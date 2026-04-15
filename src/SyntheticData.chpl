@@ -51,7 +51,7 @@ module SyntheticData {
       for f in 0..#nInformative do
         score += data.X[i, f] * weights[f];
       score += noise[i] * 0.1;
-      data.y[i] = if score > 0.0 then 1.0 else 0.0;
+      data.y[i] = (if score > 0.0 then 1.0 else 0.0): real(32);
     }
 
     return data;
@@ -86,7 +86,7 @@ module SyntheticData {
       if nFeatures > 0 then signal += sin(data.X[i, 0]);
       if nFeatures > 1 then signal += 0.5 * data.X[i, 1] ** 2;
       if nFeatures > 2 then signal -= data.X[i, 2];
-      data.y[i] = signal + noise[i] * 0.1;
+      data.y[i] = (signal + noise[i] * 0.1): real(32);
     }
 
     return data;

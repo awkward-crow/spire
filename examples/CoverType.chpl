@@ -47,7 +47,7 @@ config const seed            : int    = 1055742;
 // Fraction of samples correctly classified.
 // preds are raw logits; threshold at 0 (sigmoid(x) >= 0.5 iff x >= 0).
 // ------------------------------------------------------------------
-proc accuracy(preds: [] real, y: [] real): real {
+proc accuracy(preds: [] real, y: [] real(32)): real {
   var correct = 0;
   forall i in preds.domain with (+ reduce correct) {
     const yhat = if preds[i] >= 0.0 then 1.0 else 0.0;

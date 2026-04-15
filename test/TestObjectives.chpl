@@ -23,7 +23,7 @@ use Math;
 // ------------------------------------------------------------------
 // Small tolerance for floating-point comparisons
 // ------------------------------------------------------------------
-const EPS = 1e-10;
+const EPS = 1e-6;
 
 proc assertClose(name: string, got: real, expected: real, tol: real = EPS) {
   const err = abs(got - expected);
@@ -41,10 +41,10 @@ proc testMSE() {
   writeln("\n--- MSE ---");
 
   const n = 4;
-  var F    : [0..#n] real = [ 1.0,  0.5, -0.5,  2.0];
-  var y    : [0..#n] real = [ 1.0,  1.0,  0.0,  0.5];
-  var grad : [0..#n] real;
-  var hess : [0..#n] real;
+  var F    : [0..#n] real     = [ 1.0,  0.5, -0.5,  2.0];
+  var y    : [0..#n] real(32) = [ 1.0: real(32),  1.0: real(32),  0.0: real(32),  0.5: real(32)];
+  var grad : [0..#n] real(32);
+  var hess : [0..#n] real(32);
 
   var mse = new MSE();
   mse.gradients(F, y, grad, hess);
@@ -68,10 +68,10 @@ proc testLogLoss() {
 
   // sigmoid(0) = 0.5, sigmoid(large positive) ≈ 1, sigmoid(large neg) ≈ 0
   const n = 3;
-  var F    : [0..#n] real = [ 0.0,   10.0,  -10.0 ];
-  var y    : [0..#n] real = [ 1.0,    1.0,    0.0  ];
-  var grad : [0..#n] real;
-  var hess : [0..#n] real;
+  var F    : [0..#n] real     = [ 0.0,   10.0,  -10.0 ];
+  var y    : [0..#n] real(32) = [ 1.0: real(32),  1.0: real(32),  0.0: real(32) ];
+  var grad : [0..#n] real(32);
+  var hess : [0..#n] real(32);
 
   var ll = new LogLoss();
   ll.gradients(F, y, grad, hess);
@@ -106,10 +106,10 @@ proc testPinball() {
   // Exact (F == y):           grad = 0.0
   const tau = 0.9;
   const n = 3;
-  var F    : [0..#n] real = [ 0.5,  1.5,  1.0 ];
-  var y    : [0..#n] real = [ 1.0,  1.0,  1.0 ];
-  var grad : [0..#n] real;
-  var hess : [0..#n] real;
+  var F    : [0..#n] real     = [ 0.5,  1.5,  1.0 ];
+  var y    : [0..#n] real(32) = [ 1.0: real(32),  1.0: real(32),  1.0: real(32) ];
+  var grad : [0..#n] real(32);
+  var hess : [0..#n] real(32);
 
   var pb = new Pinball(tau=tau);
   pb.gradients(F, y, grad, hess);
@@ -125,8 +125,8 @@ proc testPinball() {
   // Test tau = 0.5 (median regression — symmetric)
   writeln("\n  tau=0.5 (median):");
   const tau2 = 0.5;
-  var grad2 : [0..#n] real;
-  var hess2 : [0..#n] real;
+  var grad2 : [0..#n] real(32);
+  var hess2 : [0..#n] real(32);
   var pb2 = new Pinball(tau=tau2);
   pb2.gradients(F, y, grad2, hess2);
   assertClose("Pinball(0.5) grad[0]", grad2[0], -0.5);
@@ -143,8 +143,8 @@ proc testDistributed() {
   const data = makeSyntheticClassification(nSamples=1000, nFeatures=10);
   printDataSummary(data);
 
-  var grad : [data.rowDom] real;
-  var hess : [data.rowDom] real;
+  var grad : [data.rowDom] real(32);
+  var hess : [data.rowDom] real(32);
 
   // LogLoss on classification data
   var ll = new LogLoss();
@@ -162,8 +162,8 @@ proc testDistributed() {
 
   // Regression + pinball
   const reg = makeSyntheticRegression(nSamples=1000, nFeatures=10);
-  var gp : [reg.rowDom] real;
-  var hp : [reg.rowDom] real;
+  var gp : [reg.rowDom] real(32);
+  var hp : [reg.rowDom] real(32);
   var pb = new Pinball(tau=0.9);
   pb.gradients(reg.F, reg.y, gp, hp);
 
