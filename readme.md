@@ -1,6 +1,6 @@
 # spire -- gradient boosting machines
 
-claude --resume c2633297-e74c-42f2-b026-ef54b31e259a
+start fresh — "next step - column-major Xb"
 
 ## latest
 
@@ -14,9 +14,16 @@ claude --resume c2633297-e74c-42f2-b026-ef54b31e259a
 ## next steps
 
 The primary thread is closing the speed gap with LightGBM while building
-toward correct and efficient multi-locale execution.  Current baseline:
-CoverType (396 k × 54, 100 trees, numLeaves=31): Chapel 69 s, LightGBM 0.95 s.
-Accuracy is within 0.3% — the gap is entirely in the histogram kernel.
+toward correct and efficient multi-locale execution.  Current baselines
+(20 trees, numLeaves=16):
+
+| Dataset | Chapel | LightGBM | Gap |
+|---------|--------|----------|-----|
+| SUSY (5M × 18) | 28.8 s | 3.8 s | 7.5× |
+| CoverType (396k × 54) | 8.4 s | 0.4 s | 22× |
+
+Accuracy within 0.1% of LightGBM in both cases.  Gap is entirely in the
+histogram kernel (random scatter writes); CoverType gap larger due to more features.
 
 ### Performance / multi-locale path (ordered)
 
@@ -43,11 +50,22 @@ Accuracy is within 0.3% — the gap is entirely in the histogram kernel.
    numLeaves=16, batchSize=4: 5 sample passes per tree instead of 15 (3× fewer
    coforall barriers); numLeaves=31: ~8 instead of 30 (≈3.5×).
 
-4. **Pre-sorted sample indices** — for each feature, pre-sort sample indices by bin
-   value and store as a `uint32[]` index array (one per feature, distributed).  The
-   histogram scatter then accesses bins in monotonically increasing order, improving
-   cache reuse on the histogram array.  One-time preprocessing cost, amortized over all
-   trees.
+4. ~~**Pre-sorted sample indices**~~ — implemented and reverted.  4.5× regression on
+   both benchmarks (SUSY: 28.8 s → 130 s, CoverType: 8.4 s → 38 s).
+   `lg[f, *, *]` is only 4 KB and lives in L1 — the histogram scatter was never
+   cache-thrashing.  Sorting by bin converts sequential reads of `nodeId`, `grad`,
+   `hess` (hardware-prefetchable at N=4M) into random L3 misses; that cost dwarfs
+   any histogram benefit.
+
+4b. **Column-major Xb** — the actual fix for strided Xb reads.  Current layout
+   `[numSamples, numFeatures] uint(8)` gives stride = numFeatures bytes per access
+   in the histogram inner loop (fixed f, sequential i): 1.9% cache-line utilization
+   for CoverType (54 features), 5.5% for SUSY (18 features).  Transposing to
+   `[numFeatures, numSamples]` makes that access stride-1.  Supporting evidence:
+   CoverType gap vs LightGBM is 22× (54 features), SUSY gap is 7.5× (18 features)
+   — ratio ≈ 3× matches feature-count ratio ≈ 3×.  LightGBM stores bins
+   column-major.  Changes: new `XbDom` in DataLayout.chpl; flip index order in
+   Binning, Histogram, Tree (mechanical, ~15 sites).
 
 5. **SIMD prefix scan in split finding** — the 255-bin prefix scan in `findBestSplitsNodes`
    is the natural AVX2 target: sequential, no scatter, fits in L1 cache.  Implement as
