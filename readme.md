@@ -4,6 +4,7 @@ claude --resume c2633297-e74c-42f2-b026-ef54b31e259a
 
 ## latest
 
+ - batched leaf-wise: batchSize=4 → 3× fewer sample passes per tree (5 vs 15 for numLeaves=16)
  - float32 gradient quantization: y, grad, hess, histogram bins all real(32); F stays real(64)
  - parallel CSV loading: 4× speedup on SUSY (60s → 15s), see section below
  - column subsampling, see section below
@@ -35,13 +36,12 @@ Accuracy is within 0.3% — the gap is entirely in the histogram kernel.
    Questions:
     - branching in inline proc sigmoid?
 
-3. **Batched leaf-wise** — instead of one split per histogram pass, pick the top-k
-   highest-gain active leaves and expand them all in a single sample pass.  Each locale
-   scans its rows once, scattering into k smaller-child slots simultaneously; k
-   subtractions then derive the k larger children.  Cost: O(N) sample reads for k splits
-   instead of O(k × N).  Also reduces the number of `coforall` barriers per tree from
-   O(numLeaves) to O(numLeaves / k) — the key win for multi-locale where barrier cost
-   scales with locale count.
+3. ~~**Batched leaf-wise**~~ — done.  `batchSize: int = 4` in `BoosterConfig`.
+   `buildHistogramsNodes` (Histogram.chpl) accumulates k smaller children in one
+   sample pass via a `nodeToSlot` lookup and `lg[f, b, slot]` local accumulators.
+   `updateNodeAssignBatch` (Tree.chpl) routes all k splits in one coforall pass.
+   numLeaves=16, batchSize=4: 5 sample passes per tree instead of 15 (3× fewer
+   coforall barriers); numLeaves=31: ~8 instead of 30 (≈3.5×).
 
 4. **Pre-sorted sample indices** — for each feature, pre-sort sample indices by bin
    value and store as a `uint32[]` index array (one per feature, distributed).  The

@@ -85,6 +85,48 @@ module Tree {
   }
 
   // ------------------------------------------------------------------
+  // updateNodeAssignBatch
+  //
+  // Routes samples for nBatch simultaneous splits in a single coforall
+  // pass.  Each sample is checked against all nBatch parent nodes; when
+  // a match is found, nodeId[i] is updated to the appropriate child.
+  //
+  // splitNodes[idx], splits[idx], leftKids[idx], rightKids[idx] describe
+  // the idx-th split (0..#nBatch).  All parent nodes must be distinct.
+  //
+  // Cost: one coforall pass × O(nBatch) inner check per sample.
+  // For nBatch=4 this is 4× more work per sample than updateNodeAssign,
+  // but replaces nBatch sequential passes — net O(N) instead of O(nBatch × N).
+  // ------------------------------------------------------------------
+  proc updateNodeAssignBatch(
+      data        : GBMData,
+      ref nodeId  : [] int,
+      nBatch      : int,
+      splitNodes  : [] int,
+      splits      : [] SplitInfo,
+      leftKids    : [] int,
+      rightKids   : [] int
+  ) {
+    coforall loc in Locales with (ref nodeId) {
+      on loc {
+        const localDom = data.rowDom.localSubdomain();
+        forall i in localDom with (ref nodeId) {
+          const n = nodeId[i];
+          for idx in 0..#nBatch {
+            if n == splitNodes[idx] {
+              if data.Xb[i, splits[idx].feature] <= splits[idx].bin then
+                nodeId[i] = leftKids[idx];
+              else
+                nodeId[i] = rightKids[idx];
+              break;
+            }
+          }
+        }
+      }
+    }
+  }
+
+  // ------------------------------------------------------------------
   // applyTree
   //
   // F[i] += tree.value[leaf] for each sample.

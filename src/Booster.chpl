@@ -66,6 +66,7 @@ module Booster {
     var lambda          : real = 1.0;   // L2 regularisation on leaf weights
     var colsampleByTree : real = 1.0;   // fraction of features sampled per tree
     var seed            : int  = 42;    // RNG seed for column subsampling
+    var batchSize       : int  = 4;     // leaves expanded per sample pass
   }
 
   // ------------------------------------------------------------------
@@ -157,74 +158,121 @@ module Booster {
         cachedSplits[0] = splits[0];
       }
 
-      // Expand one leaf at a time until numLeaves budget is exhausted.
+      // ----------------------------------------------------------
+      // Batched leaf-wise expansion.
+      //
+      // Each iteration picks up to batchSize highest-gain active leaves,
+      // expands them all in one sample pass (buildHistogramsNodes), and
+      // derives their larger siblings by subtraction.  Reduces the number
+      // of coforall barriers per tree from O(numLeaves) to
+      // O(numLeaves / batchSize).
+      //
+      // Working arrays — sized to maxNodes so no reallocation.
+      // ----------------------------------------------------------
+      var selLeaves   : [0..#cfg.numLeaves] int;     // selected for this batch
+      var selSplits   : [0..#cfg.numLeaves] SplitInfo;
+      var selLeft     : [0..#cfg.numLeaves] int;     // left child per selection
+      var selRight    : [0..#cfg.numLeaves] int;     // right child per selection
+      var selSmaller  : [0..#cfg.numLeaves] int;     // smaller child (histogram pass)
+      var selLarger   : [0..#cfg.numLeaves] int;     // larger child (subtraction)
+      var isSelected  : [0..#maxNodes] bool = false;
+
       while nActive < cfg.numLeaves {
 
-        // Find the highest-gain active leaf.
-        var bestLeaf = -1;
-        var bestGain = 0.0;
-        for k in 0..#nActive {
-          const leaf = activeLeaves[k];
-          if cachedSplits[leaf].valid && cachedSplits[leaf].gain > bestGain {
-            bestGain = cachedSplits[leaf].gain;
-            bestLeaf = leaf;
+        // ---- Pick top-k active leaves by gain ----------------------
+        const kWant = min(cfg.batchSize, cfg.numLeaves - nActive);
+        var nSel = 0;
+        isSelected = false;
+
+        for _pick in 0..#kWant {
+          var bestGain = 0.0;
+          var bestLeaf = -1;
+          for j in 0..#nActive {
+            const leaf = activeLeaves[j];
+            if !isSelected[leaf] && cachedSplits[leaf].valid
+                && cachedSplits[leaf].gain > bestGain {
+              bestGain = cachedSplits[leaf].gain;
+              bestLeaf = leaf;
+            }
+          }
+          if bestLeaf == -1 then break;
+          selLeaves[nSel]  = bestLeaf;
+          selSplits[nSel]  = cachedSplits[bestLeaf];
+          isSelected[bestLeaf] = true;
+          nSel += 1;
+        }
+
+        if nSel == 0 then break;    // no profitable splits remain
+
+        // ---- Allocate children and record splits -------------------
+        for idx in 0..#nSel {
+          const leaf = selLeaves[idx];
+          const left  = trees[t].nNodes; trees[t].nNodes += 1;
+          const right = trees[t].nNodes; trees[t].nNodes += 1;
+          selLeft[idx]  = left;
+          selRight[idx] = right;
+
+          trees[t].isLeaf[leaf]     = false;
+          trees[t].feature[leaf]    = selSplits[idx].feature;
+          trees[t].splitBin[leaf]   = selSplits[idx].bin;
+          trees[t].leftChild[leaf]  = left;
+          trees[t].rightChild[leaf] = right;
+
+          // Determine smaller child (hess-based) before routing.
+          const lHess = selSplits[idx].leftHess;
+          const rHess = (+ reduce hist.hess[anchorFeat, .., leaf]) - lHess;
+          if lHess <= rHess {
+            selSmaller[idx] = left;
+            selLarger[idx]  = right;
+          } else {
+            selSmaller[idx] = right;
+            selLarger[idx]  = left;
           }
         }
-        if bestLeaf == -1 then break;   // no profitable splits remain
 
-        // Allocate two child nodes.
-        const left  = trees[t].nNodes; trees[t].nNodes += 1;
-        const right = trees[t].nNodes; trees[t].nNodes += 1;
+        // ---- One coforall pass: route samples for all nSel splits --
+        updateNodeAssignBatch(data, nodeId, nSel,
+                              selLeaves[0..#nSel], selSplits[0..#nSel],
+                              selLeft[0..#nSel],   selRight[0..#nSel]);
 
-        // Record split: bestLeaf becomes internal.
-        trees[t].isLeaf[bestLeaf]     = false;
-        trees[t].feature[bestLeaf]    = cachedSplits[bestLeaf].feature;
-        trees[t].splitBin[bestLeaf]   = cachedSplits[bestLeaf].bin;
-        trees[t].leftChild[bestLeaf]  = left;
-        trees[t].rightChild[bestLeaf] = right;
+        // ---- One histogram pass for all nSel smaller children ------
+        buildHistogramsNodes(data, nodeId, hist,
+                             selSmaller[0..#nSel], featSubset);
 
-        // Route samples from bestLeaf to its children.
-        updateNodeAssign(data, bestLeaf, cachedSplits[bestLeaf], left, right, nodeId);
-
-        // Update active leaf list: replace bestLeaf with left, append right.
-        for k in 0..#nActive {
-          if activeLeaves[k] == bestLeaf {
-            activeLeaves[k] = left;
-            break;
-          }
+        // ---- nSel subtractions to derive larger children -----------
+        for idx in 0..#nSel {
+          subtractNode(hist, selLeaves[idx], selSmaller[idx], selLarger[idx], featSubset);
         }
-        activeLeaves[nActive] = right;
-        nActive += 1;
 
-        // ----------------------------------------------------------
-        // Histogram subtraction trick.
-        //
-        // leftHess and rightHess are known from the cached split.
-        // Scan only the smaller child; derive the larger by subtraction.
-        // Cost: O(N/2) sample scan average vs O(N × nActive) full rebuild.
-        // ----------------------------------------------------------
-        const leftHess  = cachedSplits[bestLeaf].leftHess;
-        const rightHess = (+ reduce hist.hess[anchorFeat, .., bestLeaf]) - leftHess;
-        const smaller   = if leftHess <= rightHess then left  else right;
-        const larger    = if leftHess <= rightHess then right else left;
-
-        buildHistogramsNode(data, nodeId, hist, smaller, featSubset);
-        subtractNode(hist, bestLeaf, smaller, larger, featSubset);
-
-        // Find splits only for the two new children; other active
-        // leaves keep their cached splits (histograms unchanged).
-        const newNodes: [0..#2] int = [left, right];
+        // ---- Find splits for 2*nSel new children -------------------
+        var newNodes: [0..#(2 * nSel)] int;
+        for idx in 0..#nSel {
+          newNodes[2 * idx]     = selLeft[idx];
+          newNodes[2 * idx + 1] = selRight[idx];
+        }
         const newSplits = findBestSplitsNodes(hist, cfg.lambda,
                                               obj.defaultMinHess(),
                                               featSubset, newNodes);
-        cachedSplits[left]  = newSplits[left];
-        cachedSplits[right] = newSplits[right];
+        for n in newNodes do cachedSplits[n] = newSplits[n];
 
-        // Update leaf values for the two new children only.
-        for child in (left, right) {
-          const G = + reduce hist.grad[anchorFeat, .., child];
-          const H = + reduce hist.hess[anchorFeat, .., child];
-          trees[t].value[child] = cfg.eta * leafValue(G, H, cfg.lambda);
+        // ---- Update active leaf list --------------------------------
+        for idx in 0..#nSel {
+          const leaf = selLeaves[idx];
+          for j in 0..#nActive {
+            if activeLeaves[j] == leaf {
+              activeLeaves[j] = selLeft[idx];
+              break;
+            }
+          }
+          activeLeaves[nActive] = selRight[idx];
+          nActive += 1;
+        }
+
+        // ---- Leaf values for all 2*nSel new children ---------------
+        for n in newNodes {
+          const G = + reduce hist.grad[anchorFeat, .., n];
+          const H = + reduce hist.hess[anchorFeat, .., n];
+          trees[t].value[n] = cfg.eta * leafValue(G, H, cfg.lambda);
         }
       }
 

@@ -347,3 +347,43 @@ Results (CoverType, 100 trees, 1 locale):
 3.7–4.5× speedup. Accuracy is bit-identical to the full-rebuild version.
 Remaining gap vs LightGBM (~50–70×) is SIMD histogram kernels + more
 aggressive parallelism.
+
+## Batched leaf-wise (2026-04-16)
+
+### Why
+
+Current subtraction-trick loop: one sample pass per split → O(numLeaves) passes per tree.
+With numLeaves=16 that's 15 passes; numLeaves=31 → 30 passes.
+Each pass is a `coforall loc in Locales` barrier, expensive at multi-locale scale.
+
+### What changed
+
+- **`BoosterConfig`** — added `batchSize: int = 4`.  Controls how many leaves are
+  expanded per sample pass.
+
+- **`buildHistogramsNodes`** (new, `Histogram.chpl`) — batched version of
+  `buildHistogramsNode`.  Accepts `targetNodes: [] int` (k smaller-child slots),
+  builds a `nodeToSlot` lookup, and accumulates into all k slots in a single
+  sample pass via `lg[f, b, slot]` local accumulators.  Partial staging array
+  is `[numLocales, nF, MAX_BINS, k]`; for CoverType k=4 ≈880 KB.
+
+- **`updateNodeAssignBatch`** (new, `Tree.chpl`) — routes samples for all k splits
+  in one `coforall` pass.  Inner per-sample loop runs `0..#nBatch` comparisons
+  and breaks on first match.
+
+- **`boost` while loop** (`Booster.chpl`) — replaces single-leaf expansion with
+  batched top-k selection:
+  1. Pick up to `batchSize` highest-gain active leaves (O(k × nActive), trivial).
+  2. Allocate 2k children, determine smaller/larger for each.
+  3. One `updateNodeAssignBatch` pass → one `buildHistogramsNodes` pass.
+  4. k `subtractNode` calls (O(nF × MAX_BINS) each, cheap).
+  5. `findBestSplitsNodes` on 2k new nodes.
+
+### Expected speedup
+
+numLeaves=16, batchSize=4: 5 sample passes per tree instead of 15 (3×).
+numLeaves=31, batchSize=4: ~8 passes instead of 30 (≈3.5×).
+Multi-locale: same 3× reduction in `coforall` barriers.
+
+Trees produced differ slightly from batchSize=1 (greedy k-at-a-time vs greedy
+1-at-a-time), but loss still decreases monotonically — all 119 tests pass.

@@ -225,6 +225,86 @@ module Histogram {
   }
 
   // ------------------------------------------------------------------
+  // buildHistogramsNodes
+  //
+  // Batched version of buildHistogramsNode: accumulates only samples
+  // whose nodeId[i] is in targetNodes (the k smaller children) into
+  // the corresponding histogram slots — all in a single sample pass.
+  //
+  // targetNodes  — array of k smaller-child node indices to populate.
+  //                Length k must be >= 1.
+  //
+  // A nodeToSlot lookup (maxNodes-length int array, -1 = unset) maps
+  // each node ID to its position in targetNodes so the inner loop is
+  // O(1) instead of O(k).  Local accumulator lg/lh is [nF, MAX_BINS, k]
+  // so each forall-f task owns a disjoint [f, *, *] slice — race-free,
+  // same pattern as buildHistogramsNode.
+  //
+  // Reduction payload: numLocales × nF × MAX_BINS × k × 4 B.
+  // For CoverType, k=4: ≈880 KB per reduce — same order as single-node.
+  // ------------------------------------------------------------------
+  proc buildHistogramsNodes(
+      data        : GBMData,
+      nodeId      : [] int,
+      ref hist    : HistogramData,
+      targetNodes : [] int,
+      featSubset  : [] int
+  ) {
+    const nF   = hist.nFeatures;
+    const maxN = hist.maxNodes;
+    const k    = targetNodes.size;
+
+    // Map node ID → slot index (0..#k).  Entries not in targetNodes stay -1.
+    var nodeToSlot: [0..#maxN] int = -1;
+    for slot in 0..#k do nodeToSlot[targetNodes[slot]] = slot;
+
+    var partialGrad: [0..#numLocales, 0..#nF, 0..#MAX_BINS, 0..#k] real(32) = 0: real(32);
+    var partialHess: [0..#numLocales, 0..#nF, 0..#MAX_BINS, 0..#k] real(32) = 0: real(32);
+
+    coforall loc in Locales {
+      on loc {
+        const lid        = loc.id;
+        const localDom   = data.rowDom.localSubdomain();
+        const localFeats = featSubset;
+        const localN2S   = nodeToSlot;   // broadcast: maxNodes ints, tiny
+
+        var lg: [0..#nF, 0..#MAX_BINS, 0..#k] real(32) = 0: real(32);
+        var lh: [0..#nF, 0..#MAX_BINS, 0..#k] real(32) = 0: real(32);
+
+        forall f in localFeats with (ref lg, ref lh) {
+          for i in localDom {
+            const n    = nodeId[i];
+            const slot = localN2S[n];
+            if slot >= 0 {
+              const b = data.Xb[i, f]: int;
+              lg[f, b, slot] += data.grad[i];
+              lh[f, b, slot] += data.hess[i];
+            }
+          }
+        }
+
+        partialGrad[lid, .., .., ..] = lg;
+        partialHess[lid, .., .., ..] = lh;
+      }
+    }
+
+    // Reduce partials into hist, one slot per target node.
+    forall f in featSubset with (ref hist) {
+      for slot in 0..#k {
+        const n = targetNodes[slot];
+        hist.grad[f, .., n] = 0: real(32);
+        hist.hess[f, .., n] = 0: real(32);
+        for loc in 0..#numLocales {
+          for b in 0..#MAX_BINS {
+            hist.grad[f, b, n] += partialGrad[loc, f, b, slot];
+            hist.hess[f, b, n] += partialHess[loc, f, b, slot];
+          }
+        }
+      }
+    }
+  }
+
+  // ------------------------------------------------------------------
   // Backward-compatible overloads — use all features (no subsampling).
   // ------------------------------------------------------------------
   proc buildHistograms(data: GBMData, nodeId: [] int, ref hist: HistogramData) {
