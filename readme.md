@@ -1,10 +1,12 @@
 # spire -- gradient boosting machines
 
-"continue the splits vectorization work"
-claude --resume "vectorize-bin-prefix-scan"
+"continue the histogram optimization work"
+
+claude --resume "chapel-gbm-histogram-optimization"
 
 ## latest
 
+ - histogram AoS layout + 4-sample unrolled C kernel: CoverType 7.4s → 1.74s (4.3×), SUSY 27.1s → 11.9s (2.3×)
  - column-major Xb: transposed Xb to [nF, nSamples] → stride-1 histogram reads; CoverType 8.4s → 7.4s (14%), SUSY 28.8s → 27.1s (6%)
  - batched leaf-wise: batchSize=4 → 3× fewer sample passes per tree (5 vs 15 for numLeaves=16)
  - float32 gradient quantization: y, grad, hess, histogram bins all real(32); F stays real(64)
@@ -18,8 +20,8 @@ toward correct and efficient multi-locale execution.  Current baselines
 
 | Dataset | Chapel | LightGBM | Gap |
 |---------|--------|----------|-----|
-| SUSY (5M × 18) | 27.1 s | 3.8 s | 7× |
-| CoverType (396k × 54) | 7.4 s | 0.4 s | 19× |
+| SUSY (5M × 18) | 11.9 s | 4.16 s | 2.9× |
+| CoverType (396k × 54) | 1.74 s | 0.39 s | 4.5× |
 
 Accuracy within 0.1% of LightGBM in both cases.  Gap is entirely in the
 histogram kernel (random scatter writes); CoverType gap larger due to more features.

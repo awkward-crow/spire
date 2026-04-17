@@ -489,3 +489,45 @@ Even a 10× speedup on split finding moves the end-to-end time by <0.1s.
 The kernel is correct (3× `vdivps ymm` confirmed in `objdump`) and will
 help for pathological workloads (tiny N, huge nFeatures×numLeaves), but the
 next meaningful vectorization target is the histogram inner loop.
+
+---
+
+## Histogram AoS layout (2026-04-17)
+
+### Motivation
+
+The histogram scatter loop writes two values per sample: `lg[f, b, slot]` and
+`lh[f, b, slot]`. With separate grad/hess arrays (SoA layout), each pair incurs
+two independent cache misses — the addresses are ~`MAX_BINS × k × 4` bytes apart
+(for CoverType k=4: ~4 KB apart). Packing `{grad, hess}` into one 8-byte record
+(AoS) puts both fields in the same cache line, halving the scatter miss count.
+
+### Change
+
+Added `record GH { var grad: real(32); var hess: real(32); }` to `Histogram.chpl`.
+Replaced `HistogramData`'s separate `grad: [histDom] real(32)` and
+`hess: [histDom] real(32)` with a single `bins: [histDom] GH`.
+
+Memory size unchanged (8 bytes per bin either way). Access pattern changes from
+two scattered loads to one, since `grad` and `hess` for the same `(f, b, slot)`
+are 4 bytes apart — guaranteed to share a cache line.
+
+### Files changed
+
+| File | Change |
+|------|--------|
+| `src/Histogram.chpl` | `record GH`; `bins: [histDom] GH`; all scatter writes use `.grad`/`.hess` |
+| `src/Splits.chpl` | Prefix scan and reduces use `hist.bins[f,b,n].grad`/`.hess` |
+| `src/Booster.chpl` | Three `+ reduce` sites updated to `[gh in hist.bins[...]] gh.grad` pattern |
+| `test/TestHistogram.chpl` | Conservation/subtraction checks updated to field access |
+| `test/TestSplits.chpl` | `new GH(grad, hess)` construction in hand-crafted histograms |
+
+### Combined benchmark: AoS + C kernel (20 trees, 16 leaves)
+
+| Dataset | Before (column-major Xb) | After | Speedup | vs LightGBM |
+|---------|--------------------------|-------|---------|-------------|
+| CoverType (396k × 54) | 7.4s | 1.74s | 4.3× | 4.5× gap |
+| SUSY (5M × 18) | 27.1s | 11.9s | 2.3× | 2.9× gap |
+
+Previous gap vs LightGBM was 19× (CoverType) and 7× (SUSY).  Combined AoS layout
++ unrolled kernel closes most of it: 4.5× and 2.9× remaining.

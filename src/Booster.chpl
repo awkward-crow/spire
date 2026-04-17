@@ -142,8 +142,8 @@ module Booster {
 
       // Root leaf value (overwritten if root gets split).
       {
-        const G = + reduce hist.grad[anchorFeat, .., 0];
-        const H = + reduce hist.hess[anchorFeat, .., 0];
+        const G = + reduce [gh in hist.bins[anchorFeat, .., 0]] gh.grad;
+        const H = + reduce [gh in hist.bins[anchorFeat, .., 0]] gh.hess;
         trees[t].value[0] = cfg.eta * leafValue(G, H, cfg.lambda);
       }
 
@@ -220,7 +220,7 @@ module Booster {
 
           // Determine smaller child (hess-based) before routing.
           const lHess = selSplits[idx].leftHess;
-          const rHess = (+ reduce hist.hess[anchorFeat, .., leaf]) - lHess;
+          const rHess = (+ reduce [gh in hist.bins[anchorFeat, .., leaf]] gh.hess) - lHess;
           if lHess <= rHess {
             selSmaller[idx] = left;
             selLarger[idx]  = right;
@@ -270,8 +270,8 @@ module Booster {
 
         // ---- Leaf values for all 2*nSel new children ---------------
         for n in newNodes {
-          const G = + reduce hist.grad[anchorFeat, .., n];
-          const H = + reduce hist.hess[anchorFeat, .., n];
+          const G = + reduce [gh in hist.bins[anchorFeat, .., n]] gh.grad;
+          const H = + reduce [gh in hist.bins[anchorFeat, .., n]] gh.hess;
           trees[t].value[n] = cfg.eta * leafValue(G, H, cfg.lambda);
         }
       }

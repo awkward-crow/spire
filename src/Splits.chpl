@@ -91,8 +91,8 @@ module Splits {
 
       // Node totals — sum over bins for the anchor feature.
       // real(32) reduces; Chapel widens to real(64) when mixed with lambda.
-      const G_P = + reduce hist.grad[anchorFeat, .., node];
-      const H_P = + reduce hist.hess[anchorFeat, .., node];
+      const G_P = + reduce [gh in hist.bins[anchorFeat, .., node]] gh.grad;
+      const H_P = + reduce [gh in hist.bins[anchorFeat, .., node]] gh.hess;
 
       if H_P < minHess {
         splits[node].valid = false;
@@ -107,8 +107,8 @@ module Splits {
         var gAcc: real(32) = 0.0: real(32);
         var hAcc: real(32) = 0.0: real(32);
         for b in 0..<MAX_BINS {
-          gAcc += hist.grad[f, b, node];
-          hAcc += hist.hess[f, b, node];
+          gAcc += hist.bins[f, b, node].grad;
+          hAcc += hist.bins[f, b, node].hess;
           prefixG[b] = gAcc;
           prefixH[b] = hAcc;
         }
@@ -177,8 +177,8 @@ module Splits {
     var prefixH: c_array(real(32), MAX_BINS);
 
     for node in nodeList {
-      const G_P = + reduce hist.grad[anchorFeat, .., node];  // real(32)
-      const H_P = + reduce hist.hess[anchorFeat, .., node];
+      const G_P = + reduce [gh in hist.bins[anchorFeat, .., node]] gh.grad;
+      const H_P = + reduce [gh in hist.bins[anchorFeat, .., node]] gh.hess;
 
       if H_P < minHess {
         splits[node].valid = false;
@@ -194,8 +194,8 @@ module Splits {
         var gAcc: real(32) = 0.0: real(32);
         var hAcc: real(32) = 0.0: real(32);
         for b in 0..<MAX_BINS {
-          gAcc += hist.grad[f, b, node];
-          hAcc += hist.hess[f, b, node];
+          gAcc += hist.bins[f, b, node].grad;
+          hAcc += hist.bins[f, b, node].hess;
           prefixG[b] = gAcc;
           prefixH[b] = hAcc;
         }

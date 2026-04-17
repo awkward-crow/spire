@@ -78,14 +78,14 @@ proc testFindBestSplits() {
   var hist = new HistogramData(maxNodes=1, nFeatures=2);
 
   // Feature 0  [f, bin, node]
-  hist.grad[0, 0, 0] =  4.0;  hist.hess[0, 0, 0] = 1.0;
-  hist.grad[0, 1, 0] = -2.0;  hist.hess[0, 1, 0] = 1.0;
-  hist.grad[0, 2, 0] = -2.0;  hist.hess[0, 2, 0] = 1.0;
+  hist.bins[0, 0, 0] = new GH( 4.0,  1.0);
+  hist.bins[0, 1, 0] = new GH(-2.0,  1.0);
+  hist.bins[0, 2, 0] = new GH(-2.0,  1.0);
 
   // Feature 1  [f, bin, node]
-  hist.grad[1, 0, 0] =  3.0;  hist.hess[1, 0, 0] = 1.0;
-  hist.grad[1, 1, 0] = -1.0;  hist.hess[1, 1, 0] = 1.0;
-  hist.grad[1, 2, 0] = -2.0;  hist.hess[1, 2, 0] = 1.0;
+  hist.bins[1, 0, 0] = new GH( 3.0,  1.0);
+  hist.bins[1, 1, 0] = new GH(-1.0,  1.0);
+  hist.bins[1, 2, 0] = new GH(-2.0,  1.0);
 
   const splits = findBestSplits(hist, lambda=0.0, minHess=0.5);
 
@@ -107,8 +107,7 @@ proc testNoValidSplit() {
   writeln("\n--- no valid split ---");
 
   var hist = new HistogramData(maxNodes=1, nFeatures=1);
-  hist.grad[0, 0, 0] = 5.0;
-  hist.hess[0, 0, 0] = 5.0;
+  hist.bins[0, 0, 0] = new GH(5.0, 5.0);
 
   const splits = findBestSplits(hist, lambda=1.0, minHess=1.0);
   assertTrue("valid=false when no profitable split", !splits[0].valid);
