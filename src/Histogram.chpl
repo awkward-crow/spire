@@ -80,7 +80,7 @@ module Histogram {
     forall f in featSubset with (ref hist) {
       for i in data.rowDom {
         const node = nodeId[i];
-        const b    = data.Xb[i, f]: int;
+        const b    = data.Xb[f, i]: int;
         hist.grad[f, b, node] += data.grad[i];
         hist.hess[f, b, node] += data.hess[i];
       }
@@ -128,7 +128,7 @@ module Histogram {
         forall f in localFeats with (ref lg, ref lh) {
           for i in localDom {
             if nodeId[i] == targetNode {
-              const b = data.Xb[i, f]: int;
+              const b = data.Xb[f, i]: int;
               lg[f, b] += data.grad[i];
               lh[f, b] += data.hess[i];
             }
@@ -201,7 +201,7 @@ module Histogram {
       for i in data.rowDom {
         const node = nodeId[i];
         if node & 1 == 1 && node >= firstLeft {
-          const b = data.Xb[i, f]: int;
+          const b = data.Xb[f, i]: int;
           hist.grad[f, b, node] += data.grad[i];
           hist.hess[f, b, node] += data.hess[i];
         }
@@ -276,7 +276,7 @@ module Histogram {
             const n    = nodeId[i];
             const slot = localN2S[n];
             if slot >= 0 {
-              const b = data.Xb[i, f]: int;
+              const b = data.Xb[f, i]: int;
               lg[f, b, slot] += data.grad[i];
               lh[f, b, slot] += data.hess[i];
             }

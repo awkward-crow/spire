@@ -348,6 +348,33 @@ Results (CoverType, 100 trees, 1 locale):
 Remaining gap vs LightGBM (~50–70×) is SIMD histogram kernels + more
 aggressive parallelism.
 
+## Column-major Xb (2026-04-17)
+
+Transposed `Xb` from `[numSamples, numFeatures]` to `[numFeatures, numSamples]`.
+In the histogram inner loop, `f` is fixed per task and `i` runs sequentially, so
+`Xb[f, i]` is now stride-1 → 100% cache-line utilization vs 1.9% for CoverType.
+
+| Dataset | Before | After | Speedup |
+|---------|--------|-------|---------|
+| CoverType (396k × 54) | 8.4s | 7.4s | 14% |
+| SUSY (5M × 18) | 28.8s | 27.1s | 6% |
+
+Gain is real but modest. The plan noted that `forall f` parallelism already partially
+amortized row-major cache waste: all 54 tasks shared the same ~1 cache line per row,
+so the hardware prefetcher still fed them efficiently. Column-major eliminates that
+incidental sharing — each task now reads an independent column — but the result is
+a smaller-than-predicted win because the pre-existing sharing was doing more work than
+expected.
+
+**Files changed:**
+- `src/DataLayout.chpl` — added `XbDom` (`{0..#nF, 0..#nSamples}`, 1×L grid); `Xb` moved off `XDom`
+- `src/Binning.chpl` — step 4 and `applyBins`: `XDom.localSubdomain()` → `XbDom.localSubdomain()`, `(i,f)` → `(f,i)`
+- `src/Histogram.chpl` — all four `data.Xb[i,f]` → `data.Xb[f,i]`
+- `src/Tree.chpl` — three sites in `updateNodeAssign`, `updateNodeAssignBatch`, `applyTree`
+- `test/TestTree.chpl`, `test/TestBinning.chpl` — index flip, comment updates
+
+---
+
 ## Batched leaf-wise (2026-04-16)
 
 ### Why

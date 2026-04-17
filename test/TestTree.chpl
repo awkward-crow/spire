@@ -50,9 +50,9 @@ proc testUpdateNodeAssign() {
 
   var data = new GBMData(numSamples=4, numFeatures=1);
   data.Xb[0, 0] = 2: uint(8);
-  data.Xb[1, 0] = 5: uint(8);
-  data.Xb[2, 0] = 8: uint(8);
-  data.Xb[3, 0] = 3: uint(8);
+  data.Xb[0, 1] = 5: uint(8);
+  data.Xb[0, 2] = 8: uint(8);
+  data.Xb[0, 3] = 3: uint(8);
 
   var split = new SplitInfo();
   split.feature = 0;
@@ -83,9 +83,9 @@ proc testApplyTree() {
 
   var data = new GBMData(numSamples=4, numFeatures=1);
   data.Xb[0, 0] = 2: uint(8);
-  data.Xb[1, 0] = 5: uint(8);
-  data.Xb[2, 0] = 8: uint(8);
-  data.Xb[3, 0] = 3: uint(8);
+  data.Xb[0, 1] = 5: uint(8);
+  data.Xb[0, 2] = 8: uint(8);
+  data.Xb[0, 3] = 3: uint(8);
 
   var tree = new FittedTree(numLeaves=2);   // capacity = 3 nodes
   tree.nNodes         = 3;

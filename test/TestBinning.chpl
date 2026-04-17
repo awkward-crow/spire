@@ -61,7 +61,7 @@ proc testFindBin() {
 //   1. All bin values in 0..MAX_BINS-1
 //   2. Bin 0 is used (at least one value below first cut-point)
 //   3. Multiple bins used per feature (not collapsed to one bin)
-//   4. Monotonicity: X[i,f] < X[j,f]  =>  Xb[i,f] <= Xb[j,f]
+//   4. Monotonicity: X[i,f] < X[j,f]  =>  Xb[f,i] <= Xb[f,j]
 //      (spot-checked on the first 20 samples)
 // ------------------------------------------------------------------
 proc testComputeBins() {
@@ -79,7 +79,7 @@ proc testComputeBins() {
   // 2. Multiple bins used for each feature
   for f in 0..#data.numFeatures {
     var seen: [0..MAX_BINS-1] bool;
-    for i in data.rowDom do seen[data.Xb[i, f]: int] = true;
+    for i in data.rowDom do seen[data.Xb[f, i]: int] = true;
     const nDistinct = + reduce seen;
     assertTrue("feature " + f:string + " uses multiple bins", nDistinct > 1);
   }
@@ -90,10 +90,10 @@ proc testComputeBins() {
   for i in 0..#limit {
     for j in (i+1)..#limit {
       for f in 0..#data.numFeatures {
-        if data.X[i, f] < data.X[j, f] && data.Xb[i, f] > data.Xb[j, f] {
+        if data.X[i, f] < data.X[j, f] && data.Xb[f, i] > data.Xb[f, j] {
           writeln("FAIL  monotonicity i=", i, " j=", j, " f=", f,
                   " X=", data.X[i,f], "/", data.X[j,f],
-                  " Xb=", data.Xb[i,f], "/", data.Xb[j,f]);
+                  " Xb=", data.Xb[f,i], "/", data.Xb[f,j]);
           monotone = false;
         }
       }

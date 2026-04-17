@@ -30,7 +30,7 @@ module Splits {
   //
   // valid = false means no profitable split was found (leaf node).
   // bin   = the highest bin index assigned to the left child;
-  //         samples with Xb[i, feature] <= bin go left.
+  //         samples with Xb[feature, i] <= bin go left.
   // ------------------------------------------------------------------
   record SplitInfo {
     var feature   : int;

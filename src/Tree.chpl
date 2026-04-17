@@ -74,7 +74,7 @@ module Tree {
         const localDom = data.rowDom.localSubdomain();
         forall i in localDom with (ref nodeId) {
           if nodeId[i] == splitNode {
-            if data.Xb[i, split.feature] <= split.bin then
+            if data.Xb[split.feature, i] <= split.bin then
               nodeId[i] = leftChild;
             else
               nodeId[i] = rightChild;
@@ -114,7 +114,7 @@ module Tree {
           const n = nodeId[i];
           for idx in 0..#nBatch {
             if n == splitNodes[idx] {
-              if data.Xb[i, splits[idx].feature] <= splits[idx].bin then
+              if data.Xb[splits[idx].feature, i] <= splits[idx].bin then
                 nodeId[i] = leftKids[idx];
               else
                 nodeId[i] = rightKids[idx];
@@ -151,7 +151,7 @@ module Tree {
         forall i in localDom with (ref F) {
           var node = 0;
           while !localIsLeaf[node] {
-            if data.Xb[i, localFeature[node]] <= localSplitBin[node] then
+            if data.Xb[localFeature[node], i] <= localSplitBin[node] then
               node = localLeftChild[node];
             else
               node = localRightChild[node];

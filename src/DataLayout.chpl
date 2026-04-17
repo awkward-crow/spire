@@ -39,7 +39,13 @@ module DataLayout {
     // Feature matrix — row-major block distribution over samples
     var XDom   : domain(2) dmapped new blockDist(boundingBox={0..#numSamples, 0..#numFeatures});
     var X      : [XDom] real;
-    var Xb     : [XDom] uint(8);  // bin indices — populated by Binning.computeBins()
+
+    // Bin matrix — column-major [numFeatures, numSamples], distributed over
+    // samples (second dim) using a 1×numLocales grid.  Fixed-f, sequential-i
+    // access in histogram loops is then stride-1.
+    var XbDom  : domain(2) dmapped new blockDist(boundingBox={0..#numFeatures, 0..#numSamples},
+                                                 targetLocales=reshape(Locales, {0..0, 0..#numLocales}));
+    var Xb     : [XbDom] uint(8);  // bin indices — populated by Binning.computeBins()
 
     // 1-D arrays — same block distribution over the sample dimension
     var rowDom : domain(1) dmapped new blockDist(boundingBox={0..#numSamples});
@@ -53,9 +59,13 @@ module DataLayout {
       this.numFeatures = numFeatures;
       this.XDom   = {0..#numSamples, 0..#numFeatures}
                       dmapped new blockDist(boundingBox={0..#numSamples, 0..#numFeatures});
+      this.XbDom  = {0..#numFeatures, 0..#numSamples}
+                      dmapped new blockDist(
+                        boundingBox={0..#numFeatures, 0..#numSamples},
+                        targetLocales=reshape(Locales, {0..0, 0..#numLocales}));
       this.rowDom = {0..#numSamples}
                       dmapped new blockDist(boundingBox={0..#numSamples});
-      // Array fields (X, y, F, grad, hess) default-initialize from their domains.
+      // Array fields (X, Xb, y, F, grad, hess) default-initialize from their domains.
     }
   }
 

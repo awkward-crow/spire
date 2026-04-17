@@ -1,9 +1,8 @@
 # spire -- gradient boosting machines
 
-start fresh — "next step - column-major Xb"
-
 ## latest
 
+ - column-major Xb: transposed Xb to [nF, nSamples] → stride-1 histogram reads; CoverType 8.4s → 7.4s (14%), SUSY 28.8s → 27.1s (6%)
  - batched leaf-wise: batchSize=4 → 3× fewer sample passes per tree (5 vs 15 for numLeaves=16)
  - float32 gradient quantization: y, grad, hess, histogram bins all real(32); F stays real(64)
  - parallel CSV loading: 4× speedup on SUSY (60s → 15s), see section below
@@ -19,8 +18,8 @@ toward correct and efficient multi-locale execution.  Current baselines
 
 | Dataset | Chapel | LightGBM | Gap |
 |---------|--------|----------|-----|
-| SUSY (5M × 18) | 28.8 s | 3.8 s | 7.5× |
-| CoverType (396k × 54) | 8.4 s | 0.4 s | 22× |
+| SUSY (5M × 18) | 27.1 s | 3.8 s | 7× |
+| CoverType (396k × 54) | 7.4 s | 0.4 s | 19× |
 
 Accuracy within 0.1% of LightGBM in both cases.  Gap is entirely in the
 histogram kernel (random scatter writes); CoverType gap larger due to more features.
@@ -57,15 +56,13 @@ histogram kernel (random scatter writes); CoverType gap larger due to more featu
    `hess` (hardware-prefetchable at N=4M) into random L3 misses; that cost dwarfs
    any histogram benefit.
 
-4b. **Column-major Xb** — the actual fix for strided Xb reads.  Current layout
-   `[numSamples, numFeatures] uint(8)` gives stride = numFeatures bytes per access
-   in the histogram inner loop (fixed f, sequential i): 1.9% cache-line utilization
-   for CoverType (54 features), 5.5% for SUSY (18 features).  Transposing to
-   `[numFeatures, numSamples]` makes that access stride-1.  Supporting evidence:
-   CoverType gap vs LightGBM is 22× (54 features), SUSY gap is 7.5× (18 features)
-   — ratio ≈ 3× matches feature-count ratio ≈ 3×.  LightGBM stores bins
-   column-major.  Changes: new `XbDom` in DataLayout.chpl; flip index order in
-   Binning, Histogram, Tree (mechanical, ~15 sites).
+4b. ~~**Column-major Xb**~~ — done.  Transposed `Xb` to `[numFeatures, numSamples]`
+   with a 1×numLocales locale grid so `Xb[f, localRows]` stays local.  Histogram
+   inner loop (fixed f, sequential i) is now stride-1.  CoverType: 8.4 s → 7.4 s
+   (14%); SUSY: 28.8 s → 27.1 s (6%).  Gain is real but modest — `forall f`
+   parallelism was already partially amortizing row-major waste by having all
+   feature tasks share the same cache lines per row.  Changes: new `XbDom` in
+   DataLayout.chpl; index flip in Binning, Histogram, Tree (~15 sites).
 
 5. **SIMD prefix scan in split finding** — the 255-bin prefix scan in `findBestSplitsNodes`
    is the natural AVX2 target: sequential, no scatter, fits in L1 cache.  Implement as

@@ -145,9 +145,9 @@ module Binning {
     coforall loc in Locales with (ref data) {
       on loc {
         var localCuts: [0..#nF, 0..#nCuts] real = cuts;
-        const localDom = data.XDom.localSubdomain();
-        forall (i, f) in localDom with (ref data) {
-          data.Xb[i, f] = findBin(data.X[i, f], localCuts, f, nCuts): uint(8);
+        const localDom = data.XbDom.localSubdomain();
+        forall (f, i) in localDom with (ref data) {
+          data.Xb[f, i] = findBin(data.X[i, f], localCuts, f, nCuts): uint(8);
         }
       }
     }
@@ -173,9 +173,9 @@ module Binning {
     coforall loc in Locales with (ref data) {
       on loc {
         var localCuts: [0..#bc.nFeatures, 0..#bc.nCuts] real = bc.values;
-        const localDom = data.XDom.localSubdomain();
-        forall (i, f) in localDom with (ref data) {
-          data.Xb[i, f] = findBin(data.X[i, f], localCuts, f, bc.nCuts): uint(8);
+        const localDom = data.XbDom.localSubdomain();
+        forall (f, i) in localDom with (ref data) {
+          data.Xb[f, i] = findBin(data.X[i, f], localCuts, f, bc.nCuts): uint(8);
         }
       }
     }
