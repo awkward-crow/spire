@@ -531,3 +531,29 @@ are 4 bytes apart — guaranteed to share a cache line.
 
 Previous gap vs LightGBM was 19× (CoverType) and 7× (SUSY).  Combined AoS layout
 + unrolled kernel closes most of it: 4.5× and 2.9× remaining.
+
+---
+
+## Dead end: intra-feature sample parallelism (2026-04-17)
+
+### Idea
+
+Split each locale's sample range into `nChunks` sub-ranges and change the
+`forall f` to a 2D `forall (feature, chunk)`.  Total tasks = nFeatSub × nChunks,
+intended to keep all hardware threads busy when nFeatSub < maxTaskPar (e.g. SUSY
+with 18 features on a machine with more cores).
+
+### Result
+
+Regression on CoverType (1.74s → 2.73s with nChunks=4) and flat on SUSY
+(11.9s → 11.7s).  Root cause: this machine has `here.maxTaskPar ≤ 18`, so
+both datasets already have enough features to saturate all cores.  The formula
+`nChunks = max(1, ceil(maxTaskPar / nFeatSub))` gives nChunks=1 for both, making
+the change a no-op structurally — but the extra 2D domain iteration and chunk
+reduction add measurable overhead even in the nChunks=1 case.
+
+### Conclusion
+
+The optimization only activates when nFeatSub < maxTaskPar (more cores than
+features).  On this machine neither dataset meets that threshold.  Reverted.
+Will be useful on ≥19-core machines running SUSY or other narrow-feature datasets.
