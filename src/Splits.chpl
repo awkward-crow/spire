@@ -24,6 +24,25 @@ module Splits {
 
   use Histogram;
   use Binning;   // MAX_BINS
+  use CTypes;    // c_array, c_ptr, c_ptrTo
+
+  // Best-split gain kernel — separate C translation unit so LLVM vectorizes it.
+  // Two passes: Chapel does the sequential prefix scan (pass 1), C does the
+  // vectorizable gain computation + argmax (pass 2).
+  require "splits_kernel.h", "splits_kernel.c";
+
+  extern proc spire_findBestBin(
+      prefixG  : c_ptr(real(32)),
+      prefixH  : c_ptr(real(32)),
+      nbins    : c_int,
+      G_P      : real(32),
+      H_P      : real(32),
+      lambda   : real(32),
+      minHess  : real(32),
+      out_gain : c_ptr(real(32)),
+      out_G_L  : c_ptr(real(32)),
+      out_H_L  : c_ptr(real(32))
+  ): c_int;
 
   // ------------------------------------------------------------------
   // SplitInfo — result of the best split found for one node.
@@ -65,6 +84,9 @@ module Splits {
     // (all give the same G_P/H_P by the conservation invariant).
     const anchorFeat = featSubset[featSubset.domain.low];
 
+    var prefixG: c_array(real(32), MAX_BINS);
+    var prefixH: c_array(real(32), MAX_BINS);
+
     for node in 0..#hist.maxNodes {
 
       // Node totals — sum over bins for the anchor feature.
@@ -81,31 +103,33 @@ module Splits {
       var   bestGain  = 0.0;   // only accept positive gains
 
       for f in featSubset {
-        var G_L: real(32) = 0.0: real(32);
-        var H_L: real(32) = 0.0: real(32);
-
+        // Pass 1 — sequential prefix scan.
+        var gAcc: real(32) = 0.0: real(32);
+        var hAcc: real(32) = 0.0: real(32);
         for b in 0..<MAX_BINS {
-          G_L += hist.grad[f, b, node];
-          H_L += hist.hess[f, b, node];
+          gAcc += hist.grad[f, b, node];
+          hAcc += hist.hess[f, b, node];
+          prefixG[b] = gAcc;
+          prefixH[b] = hAcc;
+        }
 
-          const G_R = G_P - G_L;
-          const H_R = H_P - H_L;
-
-          if H_L < minHess || H_R < minHess then continue;
-
-          const gain = leafScore(G_L, H_L, lambda)
-                     + leafScore(G_R, H_R, lambda)
-                     - scoreP;
-
-          if gain > bestGain {
-            bestGain              = gain;
-            splits[node].feature  = f;
-            splits[node].bin      = b;
-            splits[node].gain     = gain;
-            splits[node].leftGrad = G_L;
-            splits[node].leftHess = H_L;
-            splits[node].valid    = true;
-          }
+        // Pass 2 — vectorized gain evaluation + argmax via C kernel.
+        var out_gain, out_G_L, out_H_L: real(32);
+        const bestBin = spire_findBestBin(
+            c_ptrTo(prefixG[0]), c_ptrTo(prefixH[0]),
+            MAX_BINS: c_int,
+            G_P: real(32), H_P: real(32),
+            lambda: real(32), minHess: real(32),
+            c_ptrTo(out_gain), c_ptrTo(out_G_L), c_ptrTo(out_H_L)
+        );
+        if bestBin >= 0 && (out_gain: real) > bestGain {
+          bestGain              = out_gain: real;
+          splits[node].feature  = f;
+          splits[node].bin      = bestBin: int;
+          splits[node].gain     = out_gain: real;
+          splits[node].leftGrad = out_G_L;
+          splits[node].leftHess = out_H_L;
+          splits[node].valid    = true;
         }
       }
     }
@@ -148,6 +172,10 @@ module Splits {
     var splits: [0..#hist.maxNodes] SplitInfo;
     const anchorFeat = featSubset[featSubset.domain.low];
 
+    // Temp arrays reused across all (node, f) pairs — 2 × 255 × 4 B ≈ 2 KB, fits in L1.
+    var prefixG: c_array(real(32), MAX_BINS);
+    var prefixH: c_array(real(32), MAX_BINS);
+
     for node in nodeList {
       const G_P = + reduce hist.grad[anchorFeat, .., node];  // real(32)
       const H_P = + reduce hist.hess[anchorFeat, .., node];
@@ -161,31 +189,34 @@ module Splits {
       var   bestGain = 0.0;
 
       for f in featSubset {
-        var G_L: real(32) = 0.0: real(32);
-        var H_L: real(32) = 0.0: real(32);
-
+        // Pass 1 — sequential prefix scan (loop-carried dep on gAcc/hAcc).
+        // Writes contiguous stride-1 temps so pass 2 reads are vectorizable.
+        var gAcc: real(32) = 0.0: real(32);
+        var hAcc: real(32) = 0.0: real(32);
         for b in 0..<MAX_BINS {
-          G_L += hist.grad[f, b, node];
-          H_L += hist.hess[f, b, node];
+          gAcc += hist.grad[f, b, node];
+          hAcc += hist.hess[f, b, node];
+          prefixG[b] = gAcc;
+          prefixH[b] = hAcc;
+        }
 
-          const G_R = G_P - G_L;
-          const H_R = H_P - H_L;
-
-          if H_L < minHess || H_R < minHess then continue;
-
-          const gain = leafScore(G_L, H_L, lambda)
-                     + leafScore(G_R, H_R, lambda)
-                     - scoreP;
-
-          if gain > bestGain {
-            bestGain              = gain;
-            splits[node].feature  = f;
-            splits[node].bin      = b;
-            splits[node].gain     = gain;
-            splits[node].leftGrad = G_L;
-            splits[node].leftHess = H_L;
-            splits[node].valid    = true;
-          }
+        // Pass 2 — vectorized gain evaluation + argmax via C kernel.
+        var out_gain, out_G_L, out_H_L: real(32);
+        const bestBin = spire_findBestBin(
+            c_ptrTo(prefixG[0]), c_ptrTo(prefixH[0]),
+            MAX_BINS: c_int,
+            G_P: real(32), H_P: real(32),
+            lambda: real(32), minHess: real(32),
+            c_ptrTo(out_gain), c_ptrTo(out_G_L), c_ptrTo(out_H_L)
+        );
+        if bestBin >= 0 && (out_gain: real) > bestGain {
+          bestGain              = out_gain: real;
+          splits[node].feature  = f;
+          splits[node].bin      = bestBin: int;
+          splits[node].gain     = out_gain: real;
+          splits[node].leftGrad = out_G_L;
+          splits[node].leftHess = out_H_L;
+          splits[node].valid    = true;
         }
       }
     }

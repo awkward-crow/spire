@@ -414,3 +414,78 @@ Multi-locale: same 3× reduction in `coforall` barriers.
 
 Trees produced differ slightly from batchSize=1 (greedy k-at-a-time vs greedy
 1-at-a-time), but loss still decreases monotonically — all 119 tests pass.
+
+---
+
+## Split gain kernel vectorization (2026-04-17)
+
+### Why the two-pass restructure wasn't enough
+
+The two-pass restructure (committed earlier) separated the sequential prefix scan
+from the gain evaluation so LLVM could vectorize pass 2. But LLVM still didn't —
+the blocker was the conditional argmax update at the end of pass 2:
+
+```chapel
+if H_L >= minHess && H_R >= minHess && gain > bestGain {
+  bestGain = gain;
+  splits[node].feature = f;
+  splits[node].bin = b;
+  ...
+}
+```
+
+Multiple struct field writes behind a condition that depends on a computed value:
+LLVM treats this as an unsupported control-flow pattern and refuses to vectorize.
+
+### Solution: extern C kernel
+
+Moved pass 2 into a standalone C translation unit (`src/splits_kernel.c`).
+Key structural change: compute all 255 gains unconditionally into a local array,
+then do a scalar argmax separately. No conditional stores in the hot loop.
+
+```c
+// Pass 2a: vectorizable — no loop-carried deps, stride-1 I/O, branchless mask
+for (int b = 0; b < nbins; b++) {
+    float gain = G_L*G_L/(H_L+lambda) + G_R*G_R/(H_R+lambda) - score_P;
+    int   valid = (H_L >= minHess) & (H_R >= minHess);
+    gains[b] = valid ? gain : -1.0f;
+}
+// Pass 2b: scalar argmax (no divides, 255 iterations)
+```
+
+Result: 3× `vdivps ymm` (8-wide AVX2) in `spire_findBestBin` with `--fast`.
+
+### Chapel/LLVM backend detail
+
+With Chapel's LLVM backend, `require "file.c"` alone causes a compile error
+("Could not find C function") — the backend validates `extern proc` declarations
+against C prototypes during IR generation. Must also `require "file.h"` with the
+prototype. The generated Makefile rule compiles the `.c` file with `$(GEN_CFLAGS)`,
+which only includes `-O3 -march=native` when `COMP_GEN_OPT=1` (i.e., `--fast`).
+
+### Files changed
+
+| File | Change |
+|------|--------|
+| `src/splits_kernel.c` | New: vectorizable gain kernel + scalar argmax |
+| `src/splits_kernel.h` | New: prototype (needed by Chapel LLVM backend) |
+| `src/Splits.chpl` | `require` both files; `extern proc` decl; pass 2 calls kernel |
+
+### Benchmark result: null
+
+| Dataset | Before | After |
+|---------|--------|-------|
+| CoverType (396k × 54) | 7.4s | 6.5–8.9s (noise) |
+| SUSY (5M × 18) | 27.1s | 27.1s |
+
+No measurable improvement. Split finding is ~1% of total runtime for CoverType
+and <0.1% for SUSY — histogram building completely dominates.
+
+Back-of-envelope:
+- Histogram: O(N × nFeatures) per sample pass — 400k×54 = 21M ops
+- Split finding: O(numLeaves × nFeatures × MAX_BINS) — 16×54×255 ≈ 220k ops
+
+Even a 10× speedup on split finding moves the end-to-end time by <0.1s.
+The kernel is correct (3× `vdivps ymm` confirmed in `objdump`) and will
+help for pathological workloads (tiny N, huge nFeatures×numLeaves), but the
+next meaningful vectorization target is the histogram inner loop.

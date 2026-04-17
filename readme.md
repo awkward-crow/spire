@@ -1,14 +1,14 @@
 # spire -- gradient boosting machines
 
+"continue the splits vectorization work"
+claude --resume "vectorize-bin-prefix-scan"
+
 ## latest
 
  - column-major Xb: transposed Xb to [nF, nSamples] → stride-1 histogram reads; CoverType 8.4s → 7.4s (14%), SUSY 28.8s → 27.1s (6%)
  - batched leaf-wise: batchSize=4 → 3× fewer sample passes per tree (5 vs 15 for numLeaves=16)
  - float32 gradient quantization: y, grad, hess, histogram bins all real(32); F stays real(64)
  - parallel CSV loading: 4× speedup on SUSY (60s → 15s), see section below
- - column subsampling, see section below
- - much improved performance, see section below
- - quantile regression, see section below
 
 ## next steps
 
