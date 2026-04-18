@@ -557,3 +557,40 @@ reduction add measurable overhead even in the nChunks=1 case.
 The optimization only activates when nFeatSub < maxTaskPar (more cores than
 features).  On this machine neither dataset meets that threshold.  Reverted.
 Will be useful on ≥19-core machines running SUSY or other narrow-feature datasets.
+
+---
+
+## int8 nodeSlots (2026-04-18)
+
+### Idea
+
+`nodeSlots` is `int32` — 15 MB for SUSY (4M local samples × 4 bytes), 42 MB for
+Higgs.  Valid values are -1 (inactive) or 0..k-1 (k ≤ 4), so `int8` suffices.
+Shrinks to 3.8 MB / 10.5 MB.  Hypothesis: SUSY's 15 MB array doesn't fit in L3
+(12 MB), so the 17 feature tasks after the first all incur DRAM reads.  int8 fits
+in L3, turning those into cache hits.
+
+### Changes
+
+- `src/hist_kernel.h` / `src/hist_kernel.c`: `const int32_t*` → `const int8_t*`
+  for the slots parameter; local `s0..s3` / `s` widen to `int32_t` via explicit cast.
+- `src/Histogram.chpl`: `nodeSlots` declaration and fill casts changed to `int(8)`
+  in both `buildHistogramsNode` and `buildHistogramsNodes`; `extern proc` signature
+  updated to `c_ptr(int(8))`.
+
+### Result
+
+| Dataset | Before | After | Change |
+|---------|--------|-------|--------|
+| CoverType (396k × 54) | 1.74 s | 1.83 s | +5% (noise) |
+| SUSY (5M × 18) | 11.9 s | 11.5 s | -3% (noise) |
+
+No measurable benefit.  nodeSlots is accessed sequentially (prefetch-friendly) in
+both the precompute loop and the kernel; hardware prefetch keeps up regardless of
+element width.  The scatter bottleneck is on `lgh` (histogram accumulator), not on
+nodeSlots reads.
+
+### Conclusion
+
+Change kept (smaller is harmless, correct, and better for AWS locales where per-locale
+N is smaller).  Not a performance win on single-locale runs.
