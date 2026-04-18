@@ -30,7 +30,7 @@ module SyntheticData {
 
     var data = new GBMData(numSamples=nSamples, numFeatures=nFeatures);
 
-    var rng = new randomStream(real, seed=seed);
+    var rng = new randomStream(real(32), seed=seed);
     rng.fill(data.X);
     // Centre features: shift from [0,1) to [-0.5, 0.5) so the linear
     // decision score is symmetric around 0, giving balanced classes.
@@ -73,7 +73,7 @@ module SyntheticData {
 
     var data = new GBMData(numSamples=nSamples, numFeatures=nFeatures);
 
-    var rng = new randomStream(real, seed=seed);
+    var rng = new randomStream(real(32), seed=seed);
     rng.fill(data.X);
     // Centre features: shift from [0,1) to [-0.5, 0.5) for zero-mean inputs.
     forall (i, f) in data.XDom with (ref data) do data.X[i, f] -= 0.5;

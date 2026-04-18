@@ -142,9 +142,9 @@ module CSVReader {
         const row = rowOff + i;
         var feat  = 0;
         for col in 0..#nCols {
-          var v: real;
+          var v: real(32);
           r.read(v);
-          if col == lCol then data.y[row] = v: real(32);
+          if col == lCol then data.y[row] = v;
           else           { data.X[row, feat] = v; feat += 1; }
           if col < nCols - 1 then r.readThrough(",");
         }
