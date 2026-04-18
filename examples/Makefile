@@ -23,5 +23,8 @@ $(BUILD):
 $(PROGRAMS): %: %.chpl | $(BUILD)
 	$(CHPL) $(CHPLFLAGS) $< -o $(BUILD)/$@
 
+Higgs: Higgs.chpl | $(BUILD)
+	$(CHPL) $(CHPLFLAGS) -lhdf5 $< -o $(BUILD)/$@
+
 clean:
 	rm -rf $(BUILD)
