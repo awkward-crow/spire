@@ -186,4 +186,66 @@ make SUSY
 ./build/SUSY
 ```
 
+## HIGGS
+
+Binary classification on the UCI HIGGS dataset — distinguishing Higgs boson signal
+from background using kinematic features from a particle detector simulation.
+11 000 000 samples, 28 features. Objective: LogLoss.
+
+### download and save as HDF5
+
+```sh
+mkdir -p data
+source .venv/bin/activate
+python save_higgs.py
+```
+=>
+    Saved 11000000 rows x 28 features to data/higgs.h5
+    File size: 821 MB
+
+Downloads `HIGGS.csv.gz` (~2.6 GB compressed) from UCI if not already cached,
+then writes `data/higgs.h5` with gzip level-1 compression. LZF is not usable
+from Chapel (h5py-internal plugin only); gzip is built into HDF5 itself.
+
+### lightGBM benchmark
+
+```sh
+source .venv/bin/activate
+python lightgbm_higgs.py --nTrees=10 --numLeaves=16
+```
+=>
+    === HIGGS Classification — LightGBM ===
+    Samples: 11000000  Features: 28
+    Train: 9999000  Test: 1001000
+    nTrees: 10  numLeaves: 16  (elapsed: 9.28s)
+
+    Log-loss:
+      train: 0.612889  test: 0.612860
+
+    Accuracy:
+      train: 68.3026%  test: 68.3026%
+
+### chapel gbm
+
+```sh
+make Higgs
+./build/Higgs --nTrees=10 --numLeaves=16
+```
+=>
+    === HIGGS Classification — Chapel GBM ===
+    Locales: 1
+
+    Samples: 11000000  Features: 28  (load: 6.8s)
+    Train: 9999000  Test: 1001000
+
+    nTrees: 10  numLeaves: 16  (elapsed: 16.3s)
+
+    Log-loss:
+      train: 0.614563  test: 0.614538
+
+    Accuracy:
+      train: 67.9582%  test: 67.9836%
+
+0.32 pp accuracy gap vs LightGBM at 10 trees / 16 leaves.
+
 ### end
