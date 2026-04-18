@@ -1,11 +1,11 @@
 # spire -- gradient boosting machines
 
-"continue the histogram optimization work"
-
-claude --resume "chapel-gbm-histogram-optimization"
+claude --resume "histogram-chunk-parallelism"
 
 ## latest
 
+ - Higgs dataset (11M × 28): HDF5 loading via per-locale hyperslab reads (`HDF5Reader.chpl`); 67.98% accuracy vs LightGBM 68.30% at 10 trees / 16 leaves
+ - int8 nodeSlots: no measurable speedup (nodeSlots is sequential/prefetch-friendly; bottleneck is scatter on lgh not slot reads); kept for correctness + smaller AWS footprint
  - histogram AoS layout + 4-sample unrolled C kernel: CoverType 7.4s → 1.74s (4.3×), SUSY 27.1s → 11.9s (2.3×)
  - column-major Xb: transposed Xb to [nF, nSamples] → stride-1 histogram reads; CoverType 8.4s → 7.4s (14%), SUSY 28.8s → 27.1s (6%)
  - batched leaf-wise: batchSize=4 → 3× fewer sample passes per tree (5 vs 15 for numLeaves=16)
@@ -25,6 +25,23 @@ toward correct and efficient multi-locale execution.  Current baselines
 
 Accuracy within 0.1% of LightGBM in both cases.  Gap is entirely in the
 histogram kernel (random scatter writes); CoverType gap larger due to more features.
+
+### Up next
+
+1. **AWS single-locale** — run on a cloud instance (`CHPL_COMM=none`, same build
+   as local); establish cloud baseline on Higgs.
+2. **AWS multi-locale** — 4-locale cluster via GASNet; per-locale HDF5 hyperslab
+   reads in `HDF5Reader.chpl` are already designed for this.
+
+Notes for AWS setup:
+ - Use gzip compression for HDF5 (built into HDF5 itself); LZF is a h5py-internal
+   plugin and is not accessible from Chapel
+ - Uncompressed HDF5 loads in ~0.3 s locally (NVMe); gzip takes ~6.8 s (CPU-bound
+   decompression). On network storage (EFS) gzip may be faster — worth testing both
+ - Multi-locale: all locales need access to the same HDF5 file; EFS is the natural
+   choice. `HDF5Reader.chpl` uses independent per-locale hyperslab reads, no MPI needed
+ - Multi-locale build: `CHPL_COMM=gasnet`; launcher will be `gasnetrun_ibv` or
+   `gasnetrun_aries` depending on the interconnect
 
 ### Performance / multi-locale path (ordered)
 
@@ -201,5 +218,21 @@ And see `refactor.md`, objectives mature from an enum to separate records.
  - file `chapel_arkouda_gbm_conversation.md`
  - file `docker.md`
 
+## references
+
+ - **Friedman (2001). Greedy Function Approximation: A Gradient Boosting Machine.**
+   Annals of Statistics 29(5).
+   https://projecteuclid.org/euclid.aos/1013203451
+   Original GBM paper; functional gradient descent framing.
+
+ - **Chen & Guestrin (2016). XGBoost: A Scalable Tree Boosting System.**
+   KDD '16. https://arxiv.org/abs/1603.02754
+   Sections 2.1–2.2 derive the second-order Taylor expansion, regularised objective,
+   closed-form leaf weight (`-G/(H+λ)`), and split gain formula used in `Splits.chpl`.
+
+ - **Ke et al. (2017). LightGBM: A Highly Efficient Gradient Boosting Decision Tree.**
+   NeurIPS 2017.
+   https://papers.nips.cc/paper/2017/hash/6449f44a102fde848669bdd9eb6b76fa-Abstract.html
+   Leaf-wise growth, histogram approximation, GOSS.
 
 ### end
