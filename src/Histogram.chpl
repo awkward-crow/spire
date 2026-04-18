@@ -65,7 +65,7 @@ module Histogram {
       grad    : c_ptr(real(32)),
       hess    : c_ptr(real(32)),
       bins    : c_ptr(uint(8)),
-      slots   : c_ptr(int(32)),
+      slots   : c_ptr(int(8)),
       nSamples: c_int,
       nSlots  : c_int,
       lghOut  : c_ptr(real(32))
@@ -169,10 +169,10 @@ module Histogram {
 
         // Precompute per-sample slot once (not per feature):
         // slot = 0 if sample is in targetNode, -1 otherwise.
-        var nodeSlots: [0..#nLocal] int(32);
+        var nodeSlots: [0..#nLocal] int(8);
         for ii in 0..#nLocal {
           nodeSlots[ii] = if nodeId[localDom.low + ii] == targetNode
-                          then 0: int(32) else -1: int(32);
+                          then 0: int(8) else -1: int(8);
         }
 
         var lgh: [pDom] GH;   // local accumulator — 1 cache miss per scatter pair
@@ -326,9 +326,9 @@ module Histogram {
 
         // Precompute per-sample slot once (not per feature):
         // slot = nodeToSlot[nodeId[i]], or -1 if sample is inactive.
-        var nodeSlots: [0..#nLocal] int(32);
+        var nodeSlots: [0..#nLocal] int(8);
         for ii in 0..#nLocal {
-          nodeSlots[ii] = localN2S[nodeId[localDom.low + ii]]: int(32);
+          nodeSlots[ii] = localN2S[nodeId[localDom.low + ii]]: int(8);
         }
 
         var lgh: [0..#nF, 0..#MAX_BINS, 0..#k] GH;
