@@ -19,7 +19,7 @@ void spire_histKernel(
     const float*   restrict grad,
     const float*   restrict hess,
     const uint8_t* restrict bins,
-    const int32_t* restrict slots,
+    const int8_t*  restrict slots,
     int32_t        nSamples,
     int32_t        nSlots,
     float*         restrict lghOut

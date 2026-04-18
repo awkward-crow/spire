@@ -37,7 +37,7 @@ void spire_histKernel(
     const float*   restrict grad,
     const float*   restrict hess,
     const uint8_t* restrict bins,
-    const int32_t* restrict slots,
+    const int8_t*  restrict slots,
     int32_t        nSamples,
     int32_t        nSlots,
     float*         restrict lghOut
@@ -49,8 +49,8 @@ void spire_histKernel(
      * independent — the CPU can issue them in parallel, hiding the
      * load latency for the scatter targets. */
     for (; i + 3 < nSamples; i += 4) {
-        int32_t s0 = slots[i],     s1 = slots[i+1];
-        int32_t s2 = slots[i+2],   s3 = slots[i+3];
+        int32_t s0 = (int32_t)slots[i],     s1 = (int32_t)slots[i+1];
+        int32_t s2 = (int32_t)slots[i+2],   s3 = (int32_t)slots[i+3];
         int32_t b0 = (int32_t)bins[i],   b1 = (int32_t)bins[i+1];
         int32_t b2 = (int32_t)bins[i+2], b3 = (int32_t)bins[i+3];
 
@@ -78,7 +78,7 @@ void spire_histKernel(
 
     /* Scalar tail for remaining 0–3 samples. */
     for (; i < nSamples; i++) {
-        int32_t s = slots[i];
+        int32_t s = (int32_t)slots[i];
         if (s >= 0) {
             float* p = lghOut + 2 * ((int32_t)bins[i] * nSlots + s);
             p[0] += grad[i];

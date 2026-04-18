@@ -36,9 +36,11 @@ module DataLayout {
     var numSamples  : int;
     var numFeatures : int;
 
-    // Feature matrix — row-major block distribution over samples
+    // Feature matrix — row-major block distribution over samples.
+    // real(32) suffices: X is only used for binning (computeBins/applyBins),
+    // never in the training hot path.
     var XDom   : domain(2) dmapped new blockDist(boundingBox={0..#numSamples, 0..#numFeatures});
-    var X      : [XDom] real;
+    var X      : [XDom] real(32);
 
     // Bin matrix — column-major [numFeatures, numSamples], distributed over
     // samples (second dim) using a 1×numLocales grid.  Fixed-f, sequential-i
