@@ -18,11 +18,10 @@ Output columns (in order):
 """
 
 import sys
-import csv
-import gzip
 import os
 import subprocess
 import numpy as np
+import polars as pl
 
 URL      = "https://archive.ics.uci.edu/ml/machine-learning-databases/00279/SUSY.csv.gz"
 gz_cache = "data/SUSY.csv.gz"
@@ -56,36 +55,31 @@ if not os.path.exists(gz_cache):
         check=True,
     )
 else:
-    print(f"Using cached {gz_cache}")
+    print(f"Using cached {gz_cache}", flush=True)
 
-print(f"Reading {gz_cache} …")
-with gzip.open(gz_cache) as gz:
-    reader = csv.reader(line.decode() for line in gz)
-    rows = []
-    for i, row in enumerate(reader):
-        if nrows is not None and i >= nrows:
-            break
-        label = row[0]
-        feats = row[1:]
-        rows.append(feats + [label])
-        if (i + 1) % 100_000 == 0:
-            print(f"  {i + 1:>9,} rows …")
+# Original column order: label first, then 18 features.
+print(f"Reading {gz_cache} …", flush=True)
+df = pl.read_csv(
+    gz_cache,
+    has_header=False,
+    n_rows=nrows,
+    new_columns=["label"] + feature_names,
+)
+print(f"  {len(df):>9,} rows — done", flush=True)
 
-print(f"  {len(rows):>9,} rows — done")
+# Reorder: features first, label last (consistent with other datasets).
+df = df.select(feature_names + ["label"])
 
+# Shuffle rows.
 rng = np.random.default_rng(seed)
-idx = rng.permutation(len(rows))
-rows = [rows[i] for i in idx]
+df  = df[rng.permutation(len(df))]
 
-labels = [float(r[-1]) for r in rows]
-n_pos  = sum(1 for l in labels if l == 1.0)
-n_neg  = len(labels) - n_pos
+n_pos = int((df["label"] == 1.0).sum())
+n_neg = len(df) - n_pos
 
-with open(outfile, "w", newline="") as f:
-    writer = csv.writer(f)
-    writer.writerow(feature_names + ["label"])
-    writer.writerows(rows)
+print(f"Writing {outfile} …", flush=True)
+df.write_csv(outfile)
 
-print(f"Saved {len(rows)} rows x {len(feature_names)} features to {outfile} "
+print(f"Saved {len(df)} rows x {len(feature_names)} features to {outfile} "
       f"(shuffled, seed={seed})")
 print(f"Label distribution: {n_pos} signal (1), {n_neg} background (0)")
