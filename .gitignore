@@ -1,5 +1,3 @@
-docker.md
-chapel_arkouda_gbm_conversation.md
 test/build/
 examples/.venv
 examples/build
