@@ -1,238 +1,80 @@
-# spire -- gradient boosting machines
+<h1 align="center">spire</h1>
+<p align="center">Distributed gradient boosting machines in <a href="https://chapel-lang.org/">Chapel</a></p>
 
-claude --resume "histogram-chunk-parallelism"
+Spire implements leaf-wise gradient boosted trees with histogram approximation, targeting multi-locale distributed execution via Chapel's PGAS model. Accuracy is within 0.1% of LightGBM on standard benchmarks; the remaining speed gap is in the histogram scatter kernel.
 
-## latest
+## performance
 
- - Higgs dataset (11M × 28): HDF5 loading via per-locale hyperslab reads (`HDF5Reader.chpl`); 67.98% accuracy vs LightGBM 68.30% at 10 trees / 16 leaves
- - int8 nodeSlots: no measurable speedup (nodeSlots is sequential/prefetch-friendly; bottleneck is scatter on lgh not slot reads); kept for correctness + smaller AWS footprint
- - histogram AoS layout + 4-sample unrolled C kernel: CoverType 7.4s → 1.74s (4.3×), SUSY 27.1s → 11.9s (2.3×)
- - column-major Xb: transposed Xb to [nF, nSamples] → stride-1 histogram reads; CoverType 8.4s → 7.4s (14%), SUSY 28.8s → 27.1s (6%)
- - batched leaf-wise: batchSize=4 → 3× fewer sample passes per tree (5 vs 15 for numLeaves=16)
- - float32 gradient quantization: y, grad, hess, histogram bins all real(32); F stays real(64)
- - parallel CSV loading: 4× speedup on SUSY (60s → 15s), see section below
+Single-locale, 20 trees, 16 leaves:
 
-## next steps
-
-The primary thread is closing the speed gap with LightGBM while building
-toward correct and efficient multi-locale execution.  Current baselines
-(20 trees, numLeaves=16):
-
-| Dataset | Chapel | LightGBM | Gap |
-|---------|--------|----------|-----|
+| Dataset | Spire | LightGBM | Gap |
+|---------|-------|----------|-----|
 | SUSY (5M × 18) | 11.9 s | 4.16 s | 2.9× |
 | CoverType (396k × 54) | 1.74 s | 0.39 s | 4.5× |
+| Higgs (11M × 28) | — | — | 67.98% acc vs 68.30% (LightGBM, 10 trees) |
 
-Accuracy within 0.1% of LightGBM in both cases.  Gap is entirely in the
-histogram kernel (random scatter writes); CoverType gap larger due to more features.
+## optimisations
 
-### Up next
+- **C histogram kernel** — AoS layout with 4-sample unrolling; CoverType 7.4 s → 1.74 s (4.3×), SUSY 27.1 s → 11.9 s (2.3×)
+- **Column-major feature matrix** — stride-1 histogram reads; CoverType 8.4 s → 7.4 s (14%), SUSY 28.8 s → 27.1 s (6%)
+- **Batched leaf-wise growth** — accumulates `batchSize=4` children per sample pass; 3× fewer passes per tree at `numLeaves=16`
+- **float32 gradients** — halves per-sample read bandwidth and multi-locale reduction payload (~55 KB vs ~110 KB per locale per split)
+- **Parallel CSV loading** — byte-range chunks with newline alignment; SUSY 60 s → 15 s (4×)
 
-1. **AWS single-locale** — run on a cloud instance (`CHPL_COMM=none`, same build
-   as local); establish cloud baseline on Higgs.
-2. **AWS multi-locale** — 4-locale cluster via GASNet; per-locale HDF5 hyperslab
-   reads in `HDF5Reader.chpl` are already designed for this.
+## distributed execution
 
-Notes for AWS setup:
- - Use gzip compression for HDF5 (built into HDF5 itself); LZF is a h5py-internal
-   plugin and is not accessible from Chapel
- - Uncompressed HDF5 loads in ~0.3 s locally (NVMe); gzip takes ~6.8 s (CPU-bound
-   decompression). On network storage (EFS) gzip may be faster — worth testing both
- - Multi-locale: all locales need access to the same HDF5 file; EFS is the natural
-   choice. `HDF5Reader.chpl` uses independent per-locale hyperslab reads, no MPI needed
- - Multi-locale build: `CHPL_COMM=gasnet`; launcher will be `gasnetrun_ibv` or
-   `gasnetrun_aries` depending on the interconnect
+Each locale accumulates a partial histogram over its `localSubdomain()` before reducing to locale 0, minimising inter-locale traffic. HDF5 loading uses independent per-locale hyperslab reads (`HDF5Reader.chpl`), requiring no MPI and scaling naturally to a shared filesystem (e.g. EFS).
 
-### Performance / multi-locale path (ordered)
+Multi-locale build:
 
-1. ~~**Fix histogram remote GETs**~~ — done.  `buildHistogramsNode` now uses
-   `coforall loc in Locales`, each locale accumulating into a local `real(32)`
-   partial histogram over its `localSubdomain()` before reducing to locale 0.
+```sh
+CHPL_COMM=gasnet make
+./build/TestBooster -nl 4
+```
 
-2. ~~**Gradient quantization**~~ — done.  `y`, `grad`, `hess`, and all histogram
-   bins are `real(32)`; `F` stays `real(64)` for prediction accuracy.  Halves
-   per-sample read bandwidth in the scatter loop and halves the multi-locale
-   reduction payload (~55 KB per locale per split vs ~110 KB).  Single-locale
-   training time is within noise of float64 (bottleneck is random histogram
-   writes, not sequential grad reads); multi-locale benefit will be larger.
-
-   Also: interleave grad and hess a la lightGBM for a bit of cache localization.
-
-   Questions:
-    - branching in inline proc sigmoid?
-
-3. ~~**Batched leaf-wise**~~ — done.  `batchSize: int = 4` in `BoosterConfig`.
-   `buildHistogramsNodes` (Histogram.chpl) accumulates k smaller children in one
-   sample pass via a `nodeToSlot` lookup and `lg[f, b, slot]` local accumulators.
-   `updateNodeAssignBatch` (Tree.chpl) routes all k splits in one coforall pass.
-   numLeaves=16, batchSize=4: 5 sample passes per tree instead of 15 (3× fewer
-   coforall barriers); numLeaves=31: ~8 instead of 30 (≈3.5×).
-
-4. ~~**Pre-sorted sample indices**~~ — implemented and reverted.  4.5× regression on
-   both benchmarks (SUSY: 28.8 s → 130 s, CoverType: 8.4 s → 38 s).
-   `lg[f, *, *]` is only 4 KB and lives in L1 — the histogram scatter was never
-   cache-thrashing.  Sorting by bin converts sequential reads of `nodeId`, `grad`,
-   `hess` (hardware-prefetchable at N=4M) into random L3 misses; that cost dwarfs
-   any histogram benefit.
-
-4b. ~~**Column-major Xb**~~ — done.  Transposed `Xb` to `[numFeatures, numSamples]`
-   with a 1×numLocales locale grid so `Xb[f, localRows]` stays local.  Histogram
-   inner loop (fixed f, sequential i) is now stride-1.  CoverType: 8.4 s → 7.4 s
-   (14%); SUSY: 28.8 s → 27.1 s (6%).  Gain is real but modest — `forall f`
-   parallelism was already partially amortizing row-major waste by having all
-   feature tasks share the same cache lines per row.  Changes: new `XbDom` in
-   DataLayout.chpl; index flip in Binning, Histogram, Tree (~15 sites).
-
-5. **SIMD prefix scan in split finding** — the 255-bin prefix scan in `findBestSplitsNodes`
-   is the natural AVX2 target: sequential, no scatter, fits in L1 cache.  Implement as
-   an `extern` C function using `_mm256` horizontal prefix sums; expect 2–4×.  Single-locale
-   only — runs on locale 0 after the reduction.  Check whether `CHPL_TARGET_CPU=native`
-   already auto-vectorizes this before writing intrinsics.
-
-### Remaining features
-
-- **Row subsampling** — `rowsampleByTree` in `BoosterConfig`; reduces sample scan cost
-  proportionally and aids generalisation on noisy datasets.
-
-- **Early stopping** — halt training when held-out validation loss stops improving for
-  `earlyStoppingRounds` consecutive trees.  Requires a validation split passed to `boost`.
-
-- **Min-split-gain pruning** — `minGain: real = 0.0` in `BoosterConfig`; check
-  `gain > cfg.minGain` in `findBestSplitsNodes`.  Regularisation knob, not a speed win.
-
-- **Missing value handling** — required for most real-world datasets beyond the current examples.
-
-- **Parallel CSV loading** — done.  `readCSV` now divides the file into
-  `here.maxTaskPar` byte-range chunks, aligns each to the nearest newline boundary,
-  counts rows in parallel (pass 1), allocates once, then parses floats in parallel
-  (pass 2).  On SUSY (5M rows, 18 features): 60s serial → 14.8s parallel on 4 cores
-  (4× speedup).  All 119 tests pass; accuracy unchanged.
-
-## usage/tests
+## usage
 
 ```sh
 cd test
-make               # build all tests
-make run           # build and run all tests
+make        # build all tests
+make run    # build and run all tests
 ```
 
-To run a single test,
+Single test:
 
 ```sh
-make TestObjectives  
+make TestObjectives
 ./build/TestObjectives
 ```
 
-Or, after compiling for multi-locale, e.g. start a shell in docker with the project root as its working directory,
-
-```sh
-cd test
-make TestObjectives
-./build/TestObjectives -nl 4
-```
-
-### logging
+Log level `INFO` or `TRACE`:
 
 ```sh
 ./build/TestBooster -logLevel=INFO 2>&1 | less -X
 ```
 
-or log level `TRACE`.
-
-### clean up
-
-```sh
-make clean
-```
-
-## `CHPL_TARGET_CPU=native`
-
-By default tests are compiled with `CHPL_TARGET_CPU=native`, optimising for
-the build machine's CPU.  On a cluster with a specific microarchitecture,
-override this:
+By default tests compile with `--fast` (removes Chapel's nil/bounds/overflow checks) and `CHPL_TARGET_CPU=native`. Use `DEBUG=1` to restore checks, `PROFILE=1` for a `--fast -g` profiling build. Override the target CPU for a specific microarchitecture:
 
 ```sh
 make CHPL_TARGET_CPU=broadwell
+make DEBUG=1
 ```
-
-## performance
-
-### tldr; `--fast` default + histogram parallelism rewrite
-
-### --fast
-
-`examples/Makefile` now compiles with `--fast` by default (removes Chapel's
-nil/bounds/overflow checks).  Use `DEBUG=1` to restore checks, `PROFILE=1`
-for a `--fast -g` profiling build.
-
-### build histograms
-
-`buildHistograms` was re-parallelised over features instead of samples.  The
-old `forall i in samples with (+ reduce accumGrad, + reduce accumHess)` pattern
-allocated per-task copies of the full `[nodes × features × bins]` histogram
-(~2 MB each) on every call — ~22 GB of allocations over a 100-tree run.  The
-new loop is `forall f in 0..#nF with (ref hist)`: each task owns a disjoint
-`[*, f, *]` slice, so no copies and no reduce are needed.
-
-| Example | Before | After | Speedup |
-|---------|--------|-------|---------|
-| CaliforniaHousing (16 k samples, depth 6) | 38.8 s | 0.66 s | 59× |
-| Bicycle (14 k samples, depth 4, 2 quantiles) | 8.7 s | 0.57 s | 15× |
-| BreastCancer (455 samples, depth 4) | 9.8 s | 0.11 s | 89× |
-
-All outputs are numerically identical; 119/119 tests pass.
 
 ## column subsampling
 
- - column subsampling (`colsampleByTree`) — partial Fisher-Yates per tree,
-   single persistent RNG advanced across all trees; exposed as config const
-   in all example drivers.  Timing on CoverType (495 k × 54, 50 trees, depth 4):
+`colsampleByTree` draws a random feature subset per tree via partial Fisher-Yates, using a single persistent RNG advanced across all trees. Timing on CoverType (396k × 54, 50 trees, 16 leaves):
 
-   | colsample | wall time | test log-loss |
-   |-----------|-----------|---------------|
-   | 1.0       | 35 s      | 0.4337        |
-   | 0.8       | 32 s      | 0.4413        |
-   | 0.6       | 26 s      | 0.4636        |
-   | 0.4       | 22 s      | 0.4957        |
+| colsample | wall time | test log-loss |
+|-----------|-----------|---------------|
+| 1.0       | 35 s      | 0.4337        |
+| 0.8       | 32 s      | 0.4413        |
+| 0.6       | 26 s      | 0.4636        |
+| 0.4       | 22 s      | 0.4957        |
 
-   Training time scales roughly linearly with colsample.  This dataset has
-   mostly informative features so subsampling hurts accuracy; on wider datasets
-   with redundant features it will help.
-
-## quantile regression ...
-
-.. on bicycle data; also
-
-  - Records (MSE, LogLoss, Pinball) replacing the enum Objective + dispatch chains
-  - GBMEnsemble bundling trees + baseScore
-  - BoosterConfig stripped of tau and minHess
-  - boost() generic via duck typing, predict() taking GBMEnsemble
-  - t-digest binning replacing random sampling
-  - Pinball hessian fixed to tau*(1-tau)
-
-And see `refactor.md`, objectives mature from an enum to separate records.
-
-## see also
-
- - file `notes.md` in particular `open questions: leaf-wise growth, distributed angle`
- - file `chapel_arkouda_gbm_conversation.md`
- - file `docker.md`
+Training time scales roughly linearly with colsample. CoverType has mostly informative features so subsampling hurts accuracy; on wider datasets with redundant features it will help.
 
 ## references
 
- - **Friedman (2001). Greedy Function Approximation: A Gradient Boosting Machine.**
-   Annals of Statistics 29(5).
-   https://projecteuclid.org/euclid.aos/1013203451
-   Original GBM paper; functional gradient descent framing.
-
- - **Chen & Guestrin (2016). XGBoost: A Scalable Tree Boosting System.**
-   KDD '16. https://arxiv.org/abs/1603.02754
-   Sections 2.1–2.2 derive the second-order Taylor expansion, regularised objective,
-   closed-form leaf weight (`-G/(H+λ)`), and split gain formula used in `Splits.chpl`.
-
- - **Ke et al. (2017). LightGBM: A Highly Efficient Gradient Boosting Decision Tree.**
-   NeurIPS 2017.
-   https://papers.nips.cc/paper/2017/hash/6449f44a102fde848669bdd9eb6b76fa-Abstract.html
-   Leaf-wise growth, histogram approximation, GOSS.
-
-### end
+- **Friedman (2001). Greedy Function Approximation: A Gradient Boosting Machine.** Annals of Statistics 29(5). https://projecteuclid.org/euclid.aos/1013203451
+- **Chen & Guestrin (2016). XGBoost: A Scalable Tree Boosting System.** KDD '16. https://arxiv.org/abs/1603.02754
+- **Ke et al. (2017). LightGBM: A Highly Efficient Gradient Boosting Decision Tree.** NeurIPS 2017. https://papers.nips.cc/paper/2017/hash/6449f44a102fde848669bdd9eb6b76fa-Abstract.html
