@@ -3,3 +3,4 @@ examples/.venv
 examples/build
 examples/data
 examples/.python-version
+local
