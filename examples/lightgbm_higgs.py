@@ -27,11 +27,14 @@ logging.getLogger("lightgbm").setLevel(logging.ERROR)
 h5file     = "data/higgs.h5"
 n_trees    = 50
 num_leaves = 31
+colsample  = 1.0
 for arg in sys.argv[1:]:
     if arg.startswith("--nTrees="):
         n_trees = int(arg.split("=")[1])
     elif arg.startswith("--numLeaves="):
         num_leaves = int(arg.split("=")[1])
+    elif arg.startswith("--colsample="):
+        colsample = float(arg.split("=")[1])
     else:
         h5file = arg
 
@@ -60,6 +63,7 @@ params = {
     "learning_rate":     0.1,
     "reg_lambda":        1.0,
     "min_child_weight":  1.0,
+    "colsample_bytree":  colsample,
     "verbose":           -1,
 }
 
@@ -81,7 +85,7 @@ test_acc  = accuracy_score(y_test,  model.predict(X_test))  * 100.0
 
 print()
 print("=== HIGGS Classification — LightGBM ===")
-print(f"Samples: {n}  Features: {X.shape[1]}")
+print(f"Samples: {n}  Features: {X.shape[1]}  colsample_bytree: {colsample}")
 print(f"Train: {n_train}  Test: {n - n_train}")
 print(f"nTrees: {n_trees}  numLeaves: {num_leaves}  (elapsed: {elapsed:.2f}s)")
 print()
